@@ -9,39 +9,16 @@ Async generators are extremely powerful in Python, but can often become very ver
 ## Features
 
 - **Composable Generators**: Feed an async generator in, get a transformed async generator out.
-    - Writing complex data processing workflows with async generators can result in verbose and hard-to-read code.
-    - Manually chaining async generators requires boilerplate code and meticulous management of the generator states.
-    - `turbopipes` allows you to compose smaller, reusable async generator functions into larger workflows, reducing boilerplate and enhancing readability.
-
 - **Type Safety**: Maintain type safety throughout the pipeline construction.
-    - Without type safety, it's easy to introduce bugs by passing incorrect types between async generator stages.
-    - Ensuring the correct types at each stage manually can be error-prone and cumbersome.
-    - `turbopipes` leverages Python's type hints to preserve type information, catching errors at the pipeline construction phase and ensuring data integrity.
-
 - **Consistent Cancellation**: Simplify the complexity of considering error handling edge cases, with consistent cancellation.
-    - Handling cancellation and cleanup in async code can be tricky, often leading to resource leaks or incomplete cleanups.
-    - Manually managing cancellations across multiple async generators requires careful coordination and error handling.
-    - `turbopipes` abstracts cancellation management, providing consistent behavior and reducing the risk of resource leaks or dangling tasks.
-
 - **Proper Cleanup**: Take the guesswork out of choosing when/how to close async generators by following general patterns.
-    - Forgetting to close async generators properly can lead to resource leaks and unexpected behavior.
-    - Ensuring all generators are correctly closed, especially in the presence of exceptions, adds complexity to your code.
-    - `turbopipes` follows established cleanup patterns, automatically managing the lifecycle of async generators to ensure proper cleanup.
-
 - **Concurrency**: Do all of the above concurrently, making full use of the benefits of async.
-    - Async generators often end up being processed sequentially, negating the benefits of asynchronous execution.
-    - Implementing concurrent processing manually with `asyncio.Queue` and managing multiple producers and consumers can become complex and error-prone.
-    - `turbopipes` provides concurrency control primitives like `aparallel`, which parallelizes async generator processing without the need for manual queue management.
-    - Ensuring correct shutdown and error reporting in complex concurrency scenarios is simplified with `turbopipes`.
-
 - _(future)_ **Composable Pipelines**: Easily chain together asynchronous generators using the `|` operator.
-    - Constructing complex data processing pipelines with async generators can be verbose and prone to errors without proper abstractions.
-    - Manually chaining async generators often results in hard-to-read and difficult-to-maintain code.
-    - The `|` operator simplifies the chaining of async generators, making pipelines more readable and maintainable by providing a clear and concise syntax for pipeline construction.
 
 ## Usage
 
-This is a brief overview of `turbopipes` usage. Refer to the docstrings for more detailed information.
+> [!NOTE]
+> This is only a brief overview of `turbopipes`. Refer to the docstrings for more info.
 
 ### `aparallel`
 
@@ -116,4 +93,4 @@ asyncio.run(main())
 
 A common convention in the land of Python async is to distinguish the async generator/iterator variants of methods with `a`, such as `aclose` vs `close`, `contextlib.aclosing` vs `contextlib.closing`, etc.
 
-Plus it's possible that in the future, some of the building blocks my have non-async variants, and having separate names can avoid pitfalls with otherwise excessively clever type inference of using the same name for both variants.
+Plus it's possible that in the future, some of the building blocks may have non-async variants, and having separate names can avoid pitfalls with otherwise excessively clever type inference of using the same name for both variants.
