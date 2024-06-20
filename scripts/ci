@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+_COLOR_LIGHT_GREEN='\033[1;32m'
+_COLOR_OFF='\033[0m'
+
+_show_banner() {
+  printf "\n===> ${_COLOR_LIGHT_GREEN}${@}${_COLOR_OFF}\n" >&2
+}
+
+_init() {
+  _show_banner "Initializing workarea"
+  poetry install
+}
+
+_black() {
+  _show_banner 'Running Black ...'
+  poetry run black \
+    . \
+    --check \
+    --color \
+    --diff \
+    || return
+}
+
+_isort() {
+  _show_banner 'Running isort ...'
+  poetry run isort \
+    --check \
+    --color \
+    --diff \
+    turbopipes \
+    tests \
+    || return
+}
+
+_mypy() {
+  _show_banner "Running mypy"
+  poetry run mypy \
+    || return
+}
+
+_pylint() {
+  _show_banner 'Running pylint ...'
+  poetry run pylint turbopipes \
+    || return
+}
+
+_pytest() (
+  _show_banner "Running pytest"
+  poetry run pytest \
+    -p no:only \
+    --strict-markers \
+    -vv \
+    || return
+)
+
+_main() {
+  if ! (
+    _init || return
+    _mypy || return
+    _pytest || return
+    _pylint || return
+    _isort || return
+    _black || return
+  ); then
+    echo 'Failed; aborting.' >&2
+    return 1
+  else
+    _show_banner "Done."
+  fi
+}
+
+_main "$@"

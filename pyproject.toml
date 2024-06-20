@@ -1,0 +1,78 @@
+[tool.poetry]
+name = "turbopipes"
+version = "0.1.0"
+description = ""
+authors = ["Karl Kroening"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.group.dev.dependencies]
+ipython = "^8.24.0"
+isort = {extras = ["colors"], version = "^5.13.2"}
+mypy = "^1.10.0"
+pylint = "^3.2.2"
+pytest = "^8.2.1"
+pytest-faker = "^2.0.0"
+pytest-only = "^2.1.1"
+pytest-asyncio = "^0.23.7"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+include = '^/(turbopipes|tests)/.*\.pyi?$'
+skip-string-normalization = true
+target_version = ['py311']
+
+[tool.isort]
+ensure_newline_before_comments = true
+force_grid_wrap = 0
+force_single_line = true
+ignore_whitespace = true
+include_trailing_comma = true
+line_length = 88
+multi_line_output = 3
+no_sections = true
+use_parentheses = true
+
+[tool.mypy]
+files = 'turbopipes,tests'
+mypy_path = 'stubs'
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+allow_redefinition = true
+module = "tests.*"
+
+[[tool.mypy.overrides]]
+module = "turbopipes.*"
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+extra_checks = true
+no_implicit_optional = true
+no_implicit_reexport = true
+strict_equality = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+addopts = '--pdbcls=IPython.terminal.debugger:Pdb'
+asyncio_mode = 'auto'
+filterwarnings = [
+    "error::pytest.PytestUnhandledCoroutineWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "error::RuntimeWarning",
+]
+markers = []
+testpaths = ["tests"]

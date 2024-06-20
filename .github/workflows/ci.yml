@@ -1,0 +1,47 @@
+name: CI
+on:
+  - push
+jobs:
+  black:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: psf/black@23.7.0
+  isort:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/init
+      - name: Run pylint
+        run: |
+          poetry run isort \
+            --check \
+            --color \
+            --diff \
+            turbopipes \
+            tests
+  mypy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/init
+      - name: Run mypy
+        run: poetry run mypy turbopipes
+  pylint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/init
+      - name: Run pylint
+        run: poetry run pylint turbopipes
+  pytest:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/init
+      - name: Run pytest
+        run: |
+          poetry run pytest \
+            -p no:only \
+            --strict-markers \
+            -vv

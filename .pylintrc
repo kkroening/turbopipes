@@ -1,0 +1,42 @@
+[MASTER]
+fail-under=10.0
+ignore-patterns=
+ignore=CVS
+
+[MESSAGES CONTROL]
+disable=
+    abstract-method,  # https://stackoverflow.com/questions/30884804/
+    duplicate-code,  # (overly aggressive)
+    expression-not-assigned,  # (useful for list-comprehensions with side-effects)
+    fixme,  # (comment this line to see all TODOs/FIXMEs)
+    implicit-str-concat,  # (strings may be split across multiple lines)
+    logging-format-interpolation,
+    logging-fstring-interpolation,
+    missing-class-docstring,
+    missing-function-docstring,
+    missing-module-docstring,
+    redefined-outer-name,  # (needed for use of pytest fixtures)
+    too-few-public-methods,
+    too-many-ancestors,
+    too-many-instance-attributes,
+    wrong-import-order,
+enable=
+    useless-suppression
+
+[REPORTS]
+output-format=colorized
+
+[MISCELLANEOUS]
+notes=FIXME,TODO
+
+[FORMAT]
+ignore-long-lines=^\s*(# )?<?https?://\S+>?$
+
+[BASIC]
+argument-rgx=[a-z_][a-z0-9_]{1,30}$
+check-quote-consistency=yes
+check-str-concat-over-line-jumps=yes
+good-names=i,j,k,e,x,_
+max-returns=1
+max-statements=50
+variable-rgx=^([ijxykv_]|([a-z_][a-z0-9_]{2,50})|dt|ok)$
