@@ -1,5 +1,13 @@
 # `turbopipes`: Composable async generator pipelines (Python)
 
+[![CI][ci-badge]][ci]
+[![Changelog][changelog-badge]][changelog]
+
+[changelog-badge]: https://img.shields.io/badge/Changelog-%20-%23
+[changelog]: ./CHANGELOG.md
+[ci-badge]: https://github.com/kkroening/turbopipes/actions/workflows/ci.yml/badge.svg
+[ci]: https://github.com/kkroening/turbopipes/actions/workflows/ci.yml
+
 `turbopipes` provides a variety of general purpose pipe-like building blocks, aimed at unleashing the power of Python's async generators, with a focus on safety and reliability.
 
 Async generators are extremely powerful in Python, but can often become very verbose, and tough to implement correctly - particularly when it comes to concurrency, error handling, and garbage collection/cleanup.
