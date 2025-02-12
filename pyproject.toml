@@ -9,14 +9,14 @@ readme = "README.md"
 python = "^3.11"
 
 [tool.poetry.group.dev.dependencies]
-ipython = "^8.24.0"
-isort = {extras = ["colors"], version = "^5.13.2"}
-mypy = "^1.10.0"
-pylint = "^3.2.2"
-pytest = "^8.2.1"
-pytest-faker = "^2.0.0"
-pytest-only = "^2.1.1"
-pytest-asyncio = "^0.23.7"
+ipython = "^8"
+isort = {extras = ["colors"], version = "^5"}
+mypy = "^1"
+pylint = "^3"
+pytest = "^8"
+pytest-faker = "^2"
+pytest-only = "^2"
+pytest-asyncio = "^0"
 
 [build-system]
 requires = ["poetry-core"]
