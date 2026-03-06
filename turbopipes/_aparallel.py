@@ -75,19 +75,36 @@ async def aparallel(
                     print(task.result())
     """
 
-    async def wrap_awaitable(item: Awaitable[T_co]) -> T_co:
+    async def to_coro(item: Awaitable[T_co]) -> T_co:
         return await item
 
+    async def await_task(task: asyncio.Task[T_co]) -> None:
+        """Propagates cancellation downward, but swallows domain exceptions upward."""
+        try:
+            await asyncio.wait([task])
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+
+    # TBD: one could argue that this should *not* take ownership of the user-supplied
+    # `gen` - i.e. leave it to the caller to do `aclosing`.
+
     async with asyncio.TaskGroup() as group, contextlib.aclosing(gen):
-        pending_tasks: set[asyncio.Task[T_co]] = set()
+        pending_inner_tasks: set[asyncio.Task[T_co]] = set()
+
         async for item in gen:
-            coro = item if isinstance(item, Coroutine) else wrap_awaitable(item)
-            pending_tasks.add(group.create_task(coro))
-            if len(pending_tasks) >= max_concurrent:
-                done_tasks, pending_tasks = await asyncio.wait(
-                    pending_tasks, return_when=asyncio.FIRST_COMPLETED
+            coro = item if isinstance(item, Coroutine) else to_coro(item)
+            inner_task = asyncio.create_task(coro)
+            group.create_task(await_task(inner_task))
+            pending_inner_tasks.add(inner_task)
+
+            if len(pending_inner_tasks) >= max_concurrent:
+                done_tasks, pending_inner_tasks = await asyncio.wait(
+                    pending_inner_tasks, return_when=asyncio.FIRST_COMPLETED
                 )
                 for done_task in done_tasks:
                     yield done_task
-        for pending_task in pending_tasks:
+
+        # Drain phase
+        for pending_task in pending_inner_tasks:
             yield pending_task
