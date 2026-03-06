@@ -9,14 +9,16 @@ readme = "README.md"
 python = "^3.11"
 
 [tool.poetry.group.dev.dependencies]
-ipython = "^8"
-isort = {extras = ["colors"], version = "^5"}
-mypy = "^1"
-pylint = "^3"
-pytest = "^8"
-pytest-faker = "^2"
-pytest-only = "^2"
-pytest-asyncio = "^0"
+ipython = "*"
+isort = {extras = ["colors"], version = "*"}
+mypy = "*"
+pylint = "*"
+pytest = "*"
+pytest-asyncio = "*"
+pytest-faker = "*"
+pytest-only = "*"
+setuptools = '<80'  # TMP/FIXME: workaround for pytest-only being misbehaved
+types-setuptools = '*'
 
 [build-system]
 requires = ["poetry-core"]
@@ -68,9 +70,9 @@ warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 addopts = '--pdbcls=IPython.terminal.debugger:Pdb'
+asyncio_default_fixture_loop_scope = 'function'
 asyncio_mode = 'auto'
 filterwarnings = [
-    "error::pytest.PytestUnhandledCoroutineWarning",
     "error::pytest.PytestUnraisableExceptionWarning",
     "error::RuntimeWarning",
 ]
