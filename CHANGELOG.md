@@ -1,5 +1,11 @@
 # Changelog
 
+## <span id="v0-3-0" /> [v0.3.0](https://github.com/kkroening/turbopipes/releases/tag/v0.3.0) - 2025-02-11
+
+### Changes
+
+*   Fix `aparallel` inadvertent peer cancellation on task failure ([#3](https://github.com/kkroening/turbopipes/pull/3))
+
 ## <span id="v0-2-0" /> [v0.2.0](https://github.com/kkroening/turbopipes/releases/tag/v0.2.0) - 2025-02-11
 
 ### Changes
