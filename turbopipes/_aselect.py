@@ -11,13 +11,11 @@ _T = TypeVar('_T')
 async def _pull(gen: AsyncGenerator[_T, None]) -> _T:
     """Advances ``gen`` by a single item.
 
-    Wrapping the pull keeps the merge loop dealing in ordinary coroutines and tasks
-    rather than in the ``async_generator_asend`` object that ``gen.__anext__()``
-    returns.  That object is schedulable in its own right - it satisfies the
-    :class:`collections.abc.Coroutine` protocol, so :func:`asyncio.create_task` accepts
-    it directly on every supported version - which makes this wrapper a readability
-    choice rather than a necessity: ``anext(gen)`` is the plain spelling of "advance
-    this source by one", and it keeps protocol-level detail out of :func:`aselect`.
+    Wrapping the pull is a readability choice rather than a necessity: the
+    ``async_generator_asend`` object that ``gen.__anext__()`` returns happens to be
+    schedulable directly on current CPython, but going through a coroutine keeps the
+    merge loop dealing in ordinary types, and ``anext(gen)`` is the plain spelling of
+    "advance this source by one".
     """
     return await anext(gen)
 
@@ -33,6 +31,35 @@ def _is_exhausted(task: asyncio.Task[_T]) -> bool:
     that would otherwise widen the type of the tasks that get yielded.
     """
     return not task.cancelled() and isinstance(task.exception(), StopAsyncIteration)
+
+
+def _report_cleanup_failure(key: _K, task: asyncio.Task[_T]) -> None:
+    """Reports a source's own cleanup failure, if its cancelled pull carries one.
+
+    A source that was still mid-pull when the merge was torn down is cancelled, and
+    anything it raises out of its own ``finally`` lands on that cancelled pull rather
+    than on any caller: by then the merge is already unwinding and there's nobody left
+    to raise it to.  Handing it to :meth:`asyncio.loop.call_exception_handler` -
+    asyncio's own route for an exception that nobody can receive - keeps the failure
+    visible without displacing whatever is unwinding the merge, since reporting can't
+    raise the way a re-raise out of that cleanup path would.
+
+    A pull that unwound cleanly, or that had already completed before the teardown
+    reached it, carries no such failure and is left alone.
+    """
+    exc = None if task.cancelled() else task.exception()
+    if exc is not None:
+        asyncio.get_running_loop().call_exception_handler(
+            {
+                'message': (
+                    f'aselect: source {key!r} raised during its own cleanup while the '
+                    f'merge was being torn down; there was no consumer left to raise '
+                    f'it to'
+                ),
+                'exception': exc,
+                'task': task,
+            }
+        )
 
 
 async def aselect(
@@ -100,14 +127,24 @@ async def aselect(
 
         This generator takes ownership of the sources it's given, and closes all of them
         on the way out, whether it finishes normally, is closed early, or is cancelled.
+        That ownership begins when the merge does, though: like any async generator,
+        this one runs none of its body - including the registration of those closes -
+        until it's first advanced.  A merge that's closed without ever having been
+        advanced therefore leaves its sources untouched, and they're still the caller's
+        to close at that point.
 
-        There's a known asymmetry in how a source's *own* cleanup failure is reported.
-        If the source was mid-pull, its cancelled pull is gathered with
-        ``return_exceptions=True`` and anything raised out of its ``finally`` is
-        discarded; if it was parked at its ``yield``, the identical failure arrives via
-        ``aclose()`` and propagates to the caller.  Which of the two happens turns on
-        where the source was suspended when consumption stopped, which isn't something
-        the caller controls.
+        There's a real asymmetry in how a source's *own* cleanup failure surfaces, and
+        which way it goes isn't something the caller controls: it turns on where that
+        source happened to be suspended when consumption stopped.  A source parked at
+        its ``yield`` is closed via ``aclose()``, so anything raised out of its
+        ``finally`` propagates to whoever closed the merge - the better of the two
+        outcomes, and the reason that path is left as it is.  A source that was mid-pull
+        is cancelled instead, and its failure lands on the cancelled pull, at a point
+        where the merge is already unwinding and no consumer remains to receive it;
+        re-raising it there would only displace the ``GeneratorExit`` or
+        ``CancelledError`` doing the unwinding.  It's therefore passed to the event
+        loop's exception handler (see :meth:`asyncio.loop.call_exception_handler`)
+        rather than raised: reported and logged, but not propagated.
 
     Example::
 
@@ -164,8 +201,17 @@ async def aselect(
             # a matter of statement order - and holds even if this block is itself
             # interrupted.  Completed-but-unyielded pulls are awaited too, so that
             # their results and exceptions are retrieved rather than orphaned.
-            for task in pulls:
+            cancelled_pulls = {
+                task: key for task, key in pulls.items() if not task.done()
+            }
+            for task in cancelled_pulls:
                 task.cancel()
             leftovers = [*pulls, *(task for _, task in ready)]
             if leftovers:
                 await asyncio.gather(*leftovers, return_exceptions=True)
+
+            # Only a pull that was still running when it was cancelled can carry a
+            # source's own cleanup failure; one that had already completed carries an
+            # ordinary result or failure that the consumer simply walked away from.
+            for task, key in cancelled_pulls.items():
+                _report_cleanup_failure(key, task)

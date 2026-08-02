@@ -110,6 +110,12 @@ in-flight pull and waits for it to land _before_ closing any source. This is the
 library where `aclosing` alone wouldn't have been enough: `aselect` takes ownership of the sources
 you hand it, and closes every one of them for you.
 
+That ownership begins when the merge does, which is worth knowing and is a property of async
+generators rather than of `aselect` in particular. `aselect` is itself an async generator, so none of
+its body runs—including the part that arranges those closes—until you first advance it. A merge that
+gets closed without ever having been advanced (an early `return` before the `async for`, say) leaves
+its sources untouched, and they're still yours to close at that point.
+
 ## FAQ
 
 ### Why is the interface designed this way?

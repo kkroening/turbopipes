@@ -43,6 +43,14 @@ async def test_aselect__first_pass_completions_follow_mapping_order():
     # Every source is still unserved here, so the round-robin queue is exactly `gens`
     # order - the one pass for which the two coincide.  This pins the batch against
     # arbitrary `set` ordering; the round-robin test below pins which order it is.
+    #
+    # That first property depends on the order the suite runs in, which matters to
+    # anyone reordering it.  An implementation that iterated `asyncio.wait`'s `done` set
+    # directly fails this test deterministically under pytest's collection order, but
+    # can survive it under others: `set` iteration of freshly-allocated `Task` objects
+    # is heap-layout dependent, and what ran beforehand changes the layout.  Introducing
+    # `pytest-randomly`, or otherwise shuffling the order, would cost this test its
+    # falsifying power without changing a line of it - and nothing would fail to say so.
     async def source(name):
         yield name
 
@@ -232,6 +240,91 @@ async def test_aselect__teardown_closes_a_source_parked_at_its_yield():
             break
 
     assert closed == ['only']
+
+
+async def test_aselect__teardown_reports_a_mid_pull_cleanup_failure():
+    # A source cancelled mid-pull raises out of its own `finally` onto the cancelled
+    # pull, where the merge is already unwinding and no consumer is left to receive it.
+    # That failure goes to the event loop's exception handler rather than being
+    # discarded by the `return_exceptions=True` gather that collects the cancellations.
+    class MockError(Exception):
+        pass
+
+    async def chatty():
+        while True:
+            yield 'chatty'
+
+    async def quiet():
+        try:
+            await asyncio.Event().wait()  # nothing ever sets it
+            yield 'unreachable'  # pragma: no cover
+        finally:
+            raise MockError('Cleanup failed')
+
+    reported = []
+
+    def handle_exception(_loop, context):
+        reported.append(context)
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(handle_exception)
+    try:
+        stream = turbopipes.aselect({'chatty': chatty(), 'quiet': quiet()})
+        async with contextlib.aclosing(stream):
+            async for _key, task in stream:
+                await task
+                break  # walk away with 'quiet' mid-pull
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert len(reported) == 1
+    assert isinstance(reported[0]['exception'], MockError)
+    assert "'quiet'" in reported[0]['message']
+
+
+async def test_aselect__teardown_does_not_report_an_unconsumed_source_failure():
+    # The counterpart to the test above: a pull that had already *completed* by the time
+    # teardown reached it carries an ordinary source failure the consumer walked away
+    # from, not a cleanup failure, and reporting it as one would be a false log line.
+    class MockError(Exception):
+        pass
+
+    async def chatty():
+        while True:
+            yield 'chatty'
+
+    gate = asyncio.Event()
+
+    async def flaky():
+        await gate.wait()
+        raise MockError('Source failed')
+        yield  # pragma: no cover
+
+    reported = []
+
+    def handle_exception(_loop, context):
+        reported.append(context)
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(handle_exception)
+    try:
+        stream = turbopipes.aselect({'chatty': chatty(), 'flaky': flaky()})
+        async with contextlib.aclosing(stream):
+            async for _key, task in stream:
+                await task
+
+                # Let 'flaky' fail while the consumer still holds the loop, so that its
+                # pull is already done - rather than mid-flight - when teardown starts.
+                gate.set()
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                break
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert reported == []
 
 
 async def test_aselect__cancellation_closes_sources():
