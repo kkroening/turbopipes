@@ -249,7 +249,9 @@ async def test_aselect__teardown_reports_a_mid_pull_cleanup_failure():
     # A source cancelled mid-pull raises out of its own `finally` onto the cancelled
     # pull, where the merge is already unwinding and no consumer is left to receive it.
     # That failure goes to the event loop's exception handler rather than being
-    # discarded by the `return_exceptions=True` gather that collects the cancellations.
+    # discarded by the `return_exceptions=True` gather that collects the cancellations -
+    # unless it's itself a `CancelledError`, which leaves the pull indistinguishable
+    # from one whose source propagated the cancellation, and so goes unreported.
     class MockError(Exception):
         pass
 

@@ -125,7 +125,11 @@ cancelled consumer can look like it raised, and a `TimeoutError` can go missing.
 failure can propagate, though: every source still gets closed, but only the last failure raised
 survives, so if several sources fail their own cleanup the rest are dropped rather than chained onto
 it. A source that unwinds on its cancelled pull instead has nobody left to raise to, so its failure
-goes to the event loop's exception handler—logged, not propagated.
+goes to the event loop's exception handler—logged, not propagated. That route is where the "doesn't
+always surface" above comes from: if what the source raised is itself a `CancelledError`, its pull
+looks exactly like one whose source simply propagated the cancellation it was sent, so nothing is
+reported at all—and a `finally` that merely awaits something already cancelled is enough to land
+there.
 
 ## FAQ
 

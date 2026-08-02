@@ -64,10 +64,9 @@ def _report_cleanup_failure(key: _K, task: asyncio.Task[_T]) -> None:
     them, so the run comes apart before the teardown reaches this reporting.  That's
     worth knowing before touching the gather, which isn't the thing drawing that line -
     it stores a ``BaseException`` as readily as an ``Exception``, and what's reported is
-    decided by the predicate below rather than by the type of what was raised.  A
-    ``BaseException`` is therefore swallowed here like any other, since reporting
-    deliberately doesn't re-raise, and that's the intended outcome for a cleanup failure
-    whatever it derives from.
+    decided by the predicate below.  A ``BaseException`` is therefore swallowed here
+    like any other, since reporting deliberately doesn't re-raise, and that's the
+    intended outcome for a cleanup failure whatever it derives from.
     """
     exc = None if task.cancelled() or _is_exhausted(task) else task.exception()
     if exc is not None:
@@ -160,9 +159,8 @@ async def aselect(
         to close at that point.
 
         There's a real asymmetry in how a source's *own* cleanup failure surfaces, and
-        which way it goes isn't something the caller controls: it turns on whether that
-        source unwound on a cancelled pull, and on whether a peer fails its own cleanup
-        after it.  A source closed via ``aclose()`` - one parked at its ``yield``, or
+        neither which way it goes nor whether it surfaces at all is something the caller
+        controls.  A source closed via ``aclose()`` - one parked at its ``yield``, or
         one that swallowed its cancellation and produced another item - propagates
         anything raised out of its ``finally`` to whoever closed the merge: the better
         outcome when the merge is being closed *explicitly*, and the reason that path is
@@ -184,7 +182,12 @@ async def aselect(
         ``CancelledError`` doing the unwinding - the same hazard, deliberately not
         realised on this side.  It's therefore passed to the event loop's exception
         handler (see :meth:`asyncio.loop.call_exception_handler`) rather than raised:
-        reported and logged, but not propagated.
+        reported and logged, but not propagated - unless what it raised is itself a
+        ``CancelledError``, which leaves its pull indistinguishable from one whose
+        source simply propagated the cancellation it was sent, and so goes unreported.
+        A ``finally`` that merely awaits something already cancelled is enough to land
+        there, so a caller who installs an exception handler for these won't see every
+        one of them.
 
     Example::
 
