@@ -44,17 +44,27 @@ def _report_cleanup_failure(key: _K, task: asyncio.Task[_T]) -> None:
     visible without re-raising it here, where it would only displace the
     ``GeneratorExit`` or ``CancelledError`` that's unwinding the merge.
 
-    A cancelled pull carries no such failure in three of the four ways it can finish:
-    the source propagated the cancellation; it caught the cancellation and returned,
-    ending its own iteration, so that the pull raises ``StopAsyncIteration`` rather
-    than cancelling; or it swallowed the cancellation and yielded once more, leaving
-    the pull with an ordinary value.  Only an exception raised while unwinding is a
-    cleanup failure.
+    A cancelled pull usually carries no such failure: the source may have propagated
+    the cancellation; or caught it and returned, ending its own iteration, so that the
+    pull raises ``StopAsyncIteration`` rather than cancelling; or swallowed it and
+    yielded once more, leaving the pull with an ordinary value.  Only an exception
+    raised while unwinding is a cleanup failure.
 
     A pull that had already *completed* before the teardown reached it isn't one
     either - it carries whatever the source produced or raised on its own account -
     but that case never arrives here, because the caller hands over only the pulls it
     actually cancelled.
+
+    Of the exceptions a source can raise out of its own ``finally``,
+    ``KeyboardInterrupt`` and ``SystemExit`` are the only two that never arrive here -
+    and it isn't the ``return_exceptions=True`` gather that keeps them out.
+    :class:`asyncio.Task`'s step handler re-raises those two types specifically into the
+    event loop after storing them, so the run comes apart before the teardown reaches
+    this reporting.  Every other ``BaseException`` is stored by that gather like any
+    other exception, arrives here, and is reported - and therefore swallowed, since
+    reporting deliberately doesn't re-raise.  That's the intended outcome for a cleanup
+    failure whatever it derives from, but it's worth knowing before touching the gather,
+    which isn't the thing drawing that line.
     """
     exc = None if task.cancelled() or _is_exhausted(task) else task.exception()
     if exc is not None:
@@ -117,17 +127,20 @@ async def aselect(
 
         Unlike the rest of this library, though, ``aclosing`` applied to the *sources*
         would not have been sufficient by itself, which is worth understanding before
-        rearranging the cleanup below.  Whenever consumption stops, every source that
-        isn't parked mid-handoff is suspended at an ``await`` *inside its own body*,
-        servicing an in-flight ``__anext__()``.  Such a generator has ``ag_running``
-        set, and calling ``aclose()`` on it raises::
+        rearranging the cleanup below.  Whenever consumption stops, every source that's
+        neither exhausted nor parked mid-handoff is suspended at an ``await`` *inside
+        its own body*, servicing an in-flight ``__anext__()``.  Such a generator has
+        ``ag_running`` set, and calling ``aclose()`` on it raises::
 
             RuntimeError: aclose(): asynchronous generator is already running
 
         That escapes from the cleanup path itself, masking the cancellation that was in
-        progress and abandoning every source that hadn't been closed yet.  The in-flight
-        pulls are therefore cancelled *and awaited* first, and only then are the sources
-        closed.
+        progress and leaving every mid-pull source uncleaned - ``aclose()`` fails on
+        each of them in turn.  It stops there rather than cascading: the
+        ``AsyncExitStack`` runs its remaining callbacks even after one of them raises,
+        so a source parked at its ``yield`` is still closed, however many failures it
+        sits behind.  The in-flight pulls are therefore cancelled *and awaited* first,
+        and only then are the sources closed.
 
         Both halves are load-bearing.  Cancelling a pull runs its source's ``finally``
         blocks, which covers every source that was mid-pull; but a source parked at its

@@ -105,10 +105,10 @@ quietly; the merge itself ends when the last one does.
 The teardown is the part worth knowing about. When you walk away early, most of the sources are
 suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
 closed—`aclose()` raises `RuntimeError: aclose(): asynchronous generator is already running`, right
-out of the cleanup path, taking the rest of the cleanup down with it. So `aselect` cancels every
-in-flight pull and waits for it to land _before_ closing any source. This is the one corner of the
-library where `aclosing` alone wouldn't have been enough: `aselect` takes ownership of the sources
-you hand it, and closes every one of them for you.
+out of the cleanup path, masking whatever cancellation was in progress and leaving every one of
+those sources unclosed. So `aselect` cancels every in-flight pull and waits for it to land _before_
+closing any source. This is the one corner of the library where `aclosing` alone wouldn't have been
+enough: `aselect` takes ownership of the sources you hand it, and closes every one of them for you.
 
 That ownership begins when the merge does, which is worth knowing and is a property of async
 generators rather than of `aselect` in particular. `aselect` is itself an async generator, so none of

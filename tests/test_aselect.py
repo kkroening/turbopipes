@@ -44,13 +44,15 @@ async def test_aselect__first_pass_completions_follow_mapping_order():
     # order - the one pass for which the two coincide.  This pins the batch against
     # arbitrary `set` ordering; the round-robin test below pins which order it is.
     #
-    # That first property depends on the order the suite runs in, which matters to
-    # anyone reordering it.  An implementation that iterated `asyncio.wait`'s `done` set
-    # directly fails this test deterministically under pytest's collection order, but
-    # can survive it under others: `set` iteration of freshly-allocated `Task` objects
-    # is heap-layout dependent, and what ran beforehand changes the layout.  Introducing
-    # `pytest-randomly`, or otherwise shuffling the order, would cost this test its
-    # falsifying power without changing a line of it - and nothing would fail to say so.
+    # That first property leans on heap allocation layout, which is worth knowing before
+    # relying on it.  An implementation that iterated `asyncio.wait`'s `done` set
+    # directly fails this test in nearly every run under pytest's collection order, but
+    # the margin isn't exact and it does occasionally survive: `set` iteration of
+    # freshly-allocated `Task` objects is layout-dependent, and the layout moves with
+    # anything that shifts allocation - what ran beforehand, and even the absolute path
+    # the tree sits at.  Shuffling the suite, e.g. with `pytest-randomly`, is therefore
+    # one way among several to cost this test its falsifying power without changing a
+    # line of it - and nothing would fail to say so.
     async def source(name):
         yield name
 
@@ -182,8 +184,7 @@ async def test_aselect__teardown_cancels_pulls_before_closing_sources():
     # suspended at an `await` *inside their own bodies* when the consumer walks away, so
     # `ag_running` is set on them; closing them before cancelling their in-flight pulls
     # raises `RuntimeError: aclose(): asynchronous generator is already running` out of
-    # the cleanup path, masking the cancellation and leaking whatever hadn't been closed
-    # yet.
+    # the cleanup path, masking the cancellation and leaving those two sources unclosed.
     closed = []
     pulling = {name: asyncio.Event() for name in ('quiet1', 'quiet2')}
 
