@@ -3,6 +3,7 @@
 Every measurement block in [`../first-principles.md`](../first-principles.md) is backed by one
 script here, and each script prints exactly the block it backs — so a number on the page can be
 re-checked rather than taken on trust, and stays checkable when CPython or the library moves.
+Checkable, not checked: see [Nothing runs these automatically](#nothing-runs-these-automatically).
 
 Run one from the repository root:
 
@@ -57,3 +58,19 @@ Two of these scripts — [`04_1_source_io.py`](04_1_source_io.py) and
 over that same defect on the way out. Each swallows exactly the `BaseExceptionGroup` of
 `GeneratorExit` it produces, re-raising anything else, and says so where it does it. The
 measurements themselves are unaffected: the cleanup runs correctly, it just also raises.
+
+## Nothing runs these automatically
+
+`scripts/ci` runs mypy, pytest, pylint, isort and black, and every one of them is scoped to
+`turbopipes` and `tests` — by argument, or in `black`'s case by the `include` regex in
+`pyproject.toml`. Nothing is pointed at `doc/`, so nothing re-runs these scripts, and nothing
+compares what they print against what the document quotes. The correspondence described at the top
+of this file is hand-checked: a number on the page carries a guarantee that somebody ran the
+script, not one that anything will notice when it stops matching.
+
+Making it an enforced guarantee would be worth doing — seventeen of the eighteen scripts are
+deterministic, so a check that ran each one and asserted its output appears verbatim in
+[`../first-principles.md`](../first-principles.md) would be a real assertion rather than a smoke
+test. Whether such a check belongs in this repository's `tests/`, or somewhere of its own, is a
+question about what that suite is for rather than one this directory should answer on its own, and
+it is left open as a follow-up for the maintainer.

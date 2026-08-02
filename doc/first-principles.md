@@ -13,7 +13,8 @@ shape that's left standing afterwards.
 
 Every measurement quoted below was produced on **CPython 3.14.6** by a script in
 [`first-principles/`](./first-principles/) — one per block, each printing exactly the block it
-backs. If you don't believe a claim, run it.
+backs, bar two whose variability is called out where they appear. If you don't believe a claim,
+run it.
 
 ---
 
@@ -68,9 +69,9 @@ aparallel(max_concurrent=8)    first result 0.01s | total 1.02s | mean tasks in 
 ```
 
 Three times the wall clock, and the first result took a hundred times longer to show up. The
-window is nominally eight wide; sampled every 5 ms across the run, the chunked version averages
-**one** task in flight, because it spends nearly all of its time waiting on a straggler with seven
-slots sitting empty.
+window is nominally eight wide; the occupancy figures are sampled every 5 ms across the run, so
+their last digit moves a little between runs. The chunked version averages **one** task in flight,
+because it spends nearly all of its time waiting on a straggler with seven slots sitting empty.
 
 A bigger chunk isn't the fix. It raises the ceiling on concurrency, but it also widens the barrier:
 the more items per chunk, the likelier one of them is a straggler, and the more peers wait behind
@@ -265,12 +266,13 @@ paid for two pages; the list form paid for all twenty before the pipeline had ru
 By the time you *have* a list, the argument about backpressure is already over.
 
 That is the input's half of it. The other half belongs to the pipeline, and it is the half the
-queue pool missed — its input was an async generator too, and it ran away regardless. What the pool
-lacked was anything connecting consumer demand to source production: it bounded the queue between
-its feeder and its workers, then left the queue between its workers and the consumer unbounded, so
-the source kept running a thousand items ahead of a consumer that was still there and merely slow.
-Here is §3's measurement again — a consumer dawdling fifty event-loop passes between items, against
-a source that would happily produce a thousand — run against `aparallel` instead of the queue pool:
+queue pool missed — its input was an async generator too, and it ran away regardless. What the
+pool lacked was anything connecting consumer demand to source production: it bounded the queue
+between its feeder and its workers, then left the queue between its workers and the consumer
+unbounded, so the source kept running a thousand items ahead of a consumer that was still there
+and merely slow. Here is §3's measurement again — a consumer dawdling fifty event-loop passes
+between items, against a source that would happily produce a thousand — run against `aparallel`
+instead of the queue pool:
 
 ```
 consumed 1, source has produced 4  (ahead by 3)
