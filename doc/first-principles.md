@@ -241,9 +241,8 @@ shape are worth deriving, since they're the three people ask about.
 ### 4.1 Why the input is an async generator, not a list
 
 Because the source's own work is work, and the only thing that can bound it is the consumer not
-asking for more. This is the requirement the queue pool missed: it bounded the queue between its
-feeder and its workers, and left the source free to run a thousand items ahead of a consumer that
-was still there and merely slow.
+asking for more. A list has already done that work, so there is nothing left for the consumer's
+restraint to reach.
 
 A realistic source doesn't have the items lying around; it fetches them — a page at a time, a
 cursor batch at a time. Written as an async generator, producing the next item is itself an
@@ -265,9 +264,13 @@ Same twenty pages of work available. The consumer took three items and left. The
 paid for two pages; the list form paid for all twenty before the pipeline had run a single item.
 By the time you *have* a list, the argument about backpressure is already over.
 
-And the bound is real, not aspirational. Here is §3's measurement again — a consumer dawdling fifty
-event-loop passes between items, against a source that would happily produce a thousand — run
-against `aparallel` instead of the queue pool:
+That is the input's half of it. The other half belongs to the pipeline, and it is the half the
+queue pool missed — its input was an async generator too, and it ran away regardless. What the pool
+lacked was anything connecting consumer demand to source production: it bounded the queue between
+its feeder and its workers, then left the queue between its workers and the consumer unbounded, so
+the source kept running a thousand items ahead of a consumer that was still there and merely slow.
+Here is §3's measurement again — a consumer dawdling fifty event-loop passes between items, against
+a source that would happily produce a thousand — run against `aparallel` instead of the queue pool:
 
 ```
 consumed 1, source has produced 4  (ahead by 3)
@@ -278,7 +281,9 @@ consumed 4, source has produced 4  (ahead by 0)
 
 With `max_concurrent=4` the source got four items ahead and then stopped dead, however long the
 consumer dawdled. The mechanism is unglamorous: `aparallel` is itself an async generator, so
-between `yield`s it isn't running, and while it isn't running it isn't pulling.
+between `yield`s it isn't running, and while it isn't running it isn't pulling. That is what closes
+the loop, and it is also why the input's type matters — withholding a pull only withholds work if
+the work hadn't already been done.
 
 ### 4.2 Why it yields awaitables instead of results
 
@@ -400,11 +405,14 @@ frames still live        : ['quiet1', 'quiet2']
 ```
 
 This is where merging stops being a variation on §4 and becomes its own problem, and the
-difference is worth being precise about. For `aparallel`, `aclosing` over the pipeline is the
-right answer: the defect §4.2 measured is a bug in an otherwise sound design, and fixing the
-teardown leaves the shape intact. Here it is the *shape* that's wrong. No amount of careful
-implementation rescues `aclosing` over the sources, because a source suspended mid-pull cannot be
-closed at all — which is the next section.
+difference is worth being precise about. It isn't that one arrangement survives and the other has
+to be thrown out — both keep the shape they started with and add what it was missing. What differs
+is *what* each was missing. For `aparallel`, the teardown is correct and only its exception
+propagation is broken: the defect §4.2 measured cancels the tasks and closes the source exactly as
+it should, and then raises on the way out. For a merge, the teardown is *incomplete*. `aclosing`
+over the sources is not sufficient by itself, and no amount of care in the closing makes it so,
+because a source suspended mid-pull cannot be closed at all until something else reaches it
+first — which is the next section.
 
 ### 5.1 `aclose()` will not touch a generator that's inside its own body
 
@@ -654,7 +662,7 @@ The parts of the surface that look most like preferences turn out to be receipts
 
 | The bit that looks arbitrary | What it's actually paying for |
 | --- | --- |
-| Takes an **async generator**, not an iterable | The source's own I/O stays under the consumer's control; the producer stops when the consumer stops (§4.1) |
+| Takes an **async generator**, not an iterable | The source's own I/O is still undone when the pipeline starts, so there is something left for backpressure to withhold — a list has already paid for all of it (§4.1) |
 | Yields **awaitables**, not results | One item's failure is the consumer's to interpret, not the pipeline's to act on (§4.2) |
 | Results come out in **completion order** | No chunk barrier, so a straggler costs one slot rather than the whole window (§2) |
 | Pairs with **`aclosing`** | Async generator cleanup is explicit; the code that stops consuming is the code that knows (§3.1) |
