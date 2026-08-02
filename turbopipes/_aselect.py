@@ -11,9 +11,13 @@ _T = TypeVar('_T')
 async def _pull(gen: AsyncGenerator[_T, None]) -> _T:
     """Advances ``gen`` by a single item.
 
-    ``gen.__anext__()`` produces an ``async_generator_asend`` object rather than a
-    coroutine, so it can't be handed to :func:`asyncio.create_task` directly; wrapping
-    it in a coroutine makes the pull schedulable as a task.
+    Wrapping the pull keeps the merge loop dealing in ordinary coroutines and tasks
+    rather than in the ``async_generator_asend`` object that ``gen.__anext__()``
+    returns.  That object is schedulable in its own right - it satisfies the
+    :class:`collections.abc.Coroutine` protocol, so :func:`asyncio.create_task` accepts
+    it directly on every supported version - which makes this wrapper a readability
+    choice rather than a necessity: ``anext(gen)`` is the plain spelling of "advance
+    this source by one", and it keeps protocol-level detail out of :func:`aselect`.
     """
     return await anext(gen)
 
@@ -63,9 +67,12 @@ async def aselect(
         ahead of a slow consumer, no matter how eagerly it would like to.
 
         When several sources complete within the same event loop pass, they're yielded
-        in the order of ``gens`` rather than in the arbitrary order that
-        :func:`asyncio.wait` reports them, so a merge of promptly-ready sources behaves
-        reproducibly.
+        least-recently-served first, rather than in the arbitrary order that
+        :func:`asyncio.wait` reports them: a source drops to the back of the queue once
+        it's been served, and sources that haven't yet produced anything are ordered
+        among themselves by their position in ``gens``.  A merge of promptly-ready
+        sources is therefore both reproducible and starvation-free - a source can't be
+        crowded out by busier peers, however far down ``gens`` it sits.
 
     Warning:
         As with the rest of this library, the caller is responsible for closing this
@@ -93,6 +100,14 @@ async def aselect(
 
         This generator takes ownership of the sources it's given, and closes all of them
         on the way out, whether it finishes normally, is closed early, or is cancelled.
+
+        There's a known asymmetry in how a source's *own* cleanup failure is reported.
+        If the source was mid-pull, its cancelled pull is gathered with
+        ``return_exceptions=True`` and anything raised out of its ``finally`` is
+        discarded; if it was parked at its ``yield``, the identical failure arrives via
+        ``aclose()`` and propagates to the caller.  Which of the two happens turns on
+        where the source was suspended when consumption stopped, which isn't something
+        the caller controls.
 
     Example::
 
@@ -126,8 +141,12 @@ async def aselect(
                         pulls, return_when=asyncio.FIRST_COMPLETED
                     )
                     # Filter `pulls` by `done` rather than iterating `done` directly, so
-                    # that sources completing within the same pass come out in `gens`
-                    # order rather than in arbitrary `set` order.
+                    # that sources completing within the same pass come out in a
+                    # deterministic round-robin order rather than in arbitrary `set`
+                    # order.  `pulls` is keyed in arming order, and a source isn't
+                    # re-armed until it's been served, so serving one sends it to the
+                    # back - which is why this is least-recently-served first, and not
+                    # `gens` order beyond the first pass.
                     done_pulls = [pull for pull in pulls if pull in done]
                     for task in done_pulls:
                         ready.append((pulls.pop(task), task))

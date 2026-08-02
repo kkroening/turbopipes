@@ -39,7 +39,10 @@ async def test_aselect__merges_in_completion_order():
         assert [key async for key, _task in stream] == []
 
 
-async def test_aselect__same_pass_completions_follow_mapping_order():
+async def test_aselect__first_pass_completions_follow_mapping_order():
+    # Every source is still unserved here, so the round-robin queue is exactly `gens`
+    # order - the one pass for which the two coincide.  This pins the batch against
+    # arbitrary `set` ordering; the round-robin test below pins which order it is.
     async def source(name):
         yield name
 
@@ -49,6 +52,36 @@ async def test_aselect__same_pass_completions_follow_mapping_order():
         actual = [key async for key, _task in stream]
 
     assert actual == keys
+
+
+async def test_aselect__same_pass_completions_follow_round_robin_order():
+    gates = {name: asyncio.Event() for name in ('a', 'b', 'c')}
+
+    async def source(name):
+        for index in range(2):
+            await gates[name].wait()
+            gates[name].clear()
+            yield f'{name}{index}'
+
+    stream = turbopipes.aselect({name: source(name) for name in gates})
+    actual = []
+    async with contextlib.aclosing(stream):
+        # Release 'a' by itself, so that serving it sends it to the back of the queue,
+        # behind 'b' and 'c' - neither of which has produced anything yet.
+        gates['a'].set()
+        _key, task = await anext(stream)
+        actual.append(await task)
+
+        # Now release all three together, so that they complete within a single pass.
+        # The batch comes out least-recently-served first, which puts 'a' last; in
+        # `gens` order it would have come out first.
+        for gate in gates.values():
+            gate.set()
+        for _ in range(3):
+            _key, task = await anext(stream)
+            actual.append(await task)
+
+    assert actual == ['a0', 'b0', 'c0', 'a1']
 
 
 async def test_aselect__exhausted_source_does_not_end_merge():
