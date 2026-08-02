@@ -36,35 +36,38 @@ def _is_exhausted(task: asyncio.Task[_T]) -> bool:
 def _report_cleanup_failure(key: _K, task: asyncio.Task[_T]) -> None:
     """Reports a source's own cleanup failure, if its cancelled pull carries one.
 
-    A source that was still mid-pull when the merge was torn down is cancelled, and
-    anything it raises out of its own ``finally`` lands on that cancelled pull rather
-    than on any caller: by then the merge is already unwinding and there's nobody left
-    to raise it to.  Handing it to :meth:`asyncio.loop.call_exception_handler` -
-    asyncio's own route for an exception that nobody can receive - keeps the failure
-    visible without re-raising it here, where it would only displace the
-    ``GeneratorExit`` or ``CancelledError`` that's unwinding the merge.
+    A source that unwinds on the cancellation of its in-flight pull raises anything from
+    its own ``finally`` onto that cancelled pull rather than onto any caller: by then
+    the merge is already unwinding and there's nobody left to raise it to.  Handing it
+    to :meth:`asyncio.loop.call_exception_handler` - asyncio's own route for an
+    exception that nobody can receive - keeps the failure visible without re-raising it
+    here, where it would only displace the ``GeneratorExit`` or ``CancelledError``
+    that's unwinding the merge.
 
     A cancelled pull usually carries no such failure: the source may have propagated
     the cancellation; or caught it and returned, ending its own iteration, so that the
     pull raises ``StopAsyncIteration`` rather than cancelling; or swallowed it and
     yielded once more, leaving the pull with an ordinary value.  Only an exception
-    raised while unwinding is a cleanup failure.
+    raised while unwinding is a cleanup failure - and not even then if it's spelled
+    ``CancelledError``: a source raising one of those afresh out of its own ``finally``
+    leaves the pull cancelled, indistinguishable from the source having propagated the
+    cancellation it was sent, so it goes unreported rather than guessed at.
 
     A pull that had already *completed* before the teardown reached it isn't one
     either - it carries whatever the source produced or raised on its own account -
     but that case never arrives here, because the caller hands over only the pulls it
     actually cancelled.
 
-    Of the exceptions a source can raise out of its own ``finally``,
-    ``KeyboardInterrupt`` and ``SystemExit`` are the only two that never arrive here -
-    and it isn't the ``return_exceptions=True`` gather that keeps them out.
-    :class:`asyncio.Task`'s step handler re-raises those two types specifically into the
-    event loop after storing them, so the run comes apart before the teardown reaches
-    this reporting.  Every other ``BaseException`` is stored by that gather like any
-    other exception, arrives here, and is reported - and therefore swallowed, since
-    reporting deliberately doesn't re-raise.  That's the intended outcome for a cleanup
-    failure whatever it derives from, but it's worth knowing before touching the gather,
-    which isn't the thing drawing that line.
+    ``KeyboardInterrupt`` and ``SystemExit`` never arrive here at all, and it isn't the
+    ``return_exceptions=True`` gather that keeps them out: :class:`asyncio.Task`'s step
+    handler re-raises those two types specifically into the event loop after storing
+    them, so the run comes apart before the teardown reaches this reporting.  That's
+    worth knowing before touching the gather, which isn't the thing drawing that line -
+    it stores a ``BaseException`` as readily as an ``Exception``, and what's reported is
+    decided by the predicate below rather than by the type of what was raised.  A
+    ``BaseException`` is therefore swallowed here like any other, since reporting
+    deliberately doesn't re-raise, and that's the intended outcome for a cleanup failure
+    whatever it derives from.
     """
     exc = None if task.cancelled() or _is_exhausted(task) else task.exception()
     if exc is not None:
@@ -127,10 +130,10 @@ async def aselect(
 
         Unlike the rest of this library, though, ``aclosing`` applied to the *sources*
         would not have been sufficient by itself, which is worth understanding before
-        rearranging the cleanup below.  Whenever consumption stops, every source that's
-        neither exhausted nor parked mid-handoff is suspended at an ``await`` *inside
-        its own body*, servicing an in-flight ``__anext__()``.  Such a generator has
-        ``ag_running`` set, and calling ``aclose()`` on it raises::
+        rearranging the cleanup below.  A source that's part-way through serving an
+        ``__anext__()`` is suspended at an ``await`` *inside its own body*, and
+        consumption can stop while it's there.  Such a generator has ``ag_running`` set,
+        and calling ``aclose()`` on it raises::
 
             RuntimeError: aclose(): asynchronous generator is already running
 
@@ -142,10 +145,11 @@ async def aselect(
         sits behind.  The in-flight pulls are therefore cancelled *and awaited* first,
         and only then are the sources closed.
 
-        Both halves are load-bearing.  Cancelling a pull runs its source's ``finally``
-        blocks, which covers every source that was mid-pull; but a source parked at its
-        ``yield`` - one whose item was just handed to the consumer, or is queued to be -
-        has no pull to cancel, and is closed by ``aclose()``.
+        Both halves are load-bearing.  Cancelling the pulls is the only way to reach a
+        source suspended inside its own body, which can't be closed until it has left
+        that ``await``; a source parked at its ``yield`` - one whose item was just
+        handed to the consumer, or is queued to be - is closed by ``aclose()`` rather
+        than by the cancellation.
 
         This generator takes ownership of the sources it's given, and closes all of them
         on the way out, whether it finishes normally, is closed early, or is cancelled.
@@ -156,28 +160,31 @@ async def aselect(
         to close at that point.
 
         There's a real asymmetry in how a source's *own* cleanup failure surfaces, and
-        which way it goes isn't something the caller controls: it turns on where that
-        source happened to be suspended when consumption stopped.  A source parked at
-        its ``yield`` is closed via ``aclose()``, so anything raised out of its
-        ``finally`` propagates to whoever closed the merge - the better outcome when
-        the merge is being closed *explicitly*, and the reason that path is left as it
-        is.  It costs something when the merge is being *cancelled* instead: the
-        propagated failure replaces the ``CancelledError``, so a cancelled consumer
-        surfaces as having raised that failure, on a task that reports itself as not
-        cancelled - and an :func:`asyncio.timeout` around the merge ends in the
-        source's exception rather than in ``TimeoutError``.  Since the sources are this
-        generator's to close, a single one with a failing ``finally`` is enough to do
-        that, which is worth weighing before running a merge inside an
+        which way it goes isn't something the caller controls: it turns on whether that
+        source unwound on a cancelled pull, and on whether a peer fails its own cleanup
+        after it.  A source closed via ``aclose()`` - one parked at its ``yield``, or
+        one that swallowed its cancellation and produced another item - propagates
+        anything raised out of its ``finally`` to whoever closed the merge: the better
+        outcome when the merge is being closed *explicitly*, and the reason that path is
+        left as it is.  Only one such failure can propagate, though: the
+        ``AsyncExitStack`` runs every close but keeps only the last exception raised, so
+        where several sources fail their own cleanup the rest are discarded rather than
+        chained onto it.  Propagating also costs something when the merge is being
+        *cancelled* instead: the propagated failure replaces the ``CancelledError``, so
+        a cancelled consumer surfaces as having raised that failure, on a task that
+        reports itself as not cancelled - and an :func:`asyncio.timeout` around the
+        merge ends in the source's exception rather than in ``TimeoutError``.  Since the
+        sources are this generator's to close, a single one with a failing ``finally``
+        is enough to do that, which is worth weighing before running a merge inside an
         :class:`asyncio.TaskGroup` or under a timeout.
 
-        A source that was *mid-pull* when consumption stopped is cancelled rather than
-        closed, and its failure lands on the cancelled pull, at a point where the merge
-        is already unwinding and no consumer remains to receive it; re-raising it there
-        would only displace the ``GeneratorExit`` or ``CancelledError`` doing the
-        unwinding - the same hazard, deliberately not realised on this side.  It's
-        therefore passed to the event loop's exception handler (see
-        :meth:`asyncio.loop.call_exception_handler`) rather than raised: reported and
-        logged, but not propagated.
+        A source that *unwinds on its cancelled pull* lands its failure there instead,
+        at a point where the merge is already unwinding and no consumer remains to
+        receive it; re-raising it there would only displace the ``GeneratorExit`` or
+        ``CancelledError`` doing the unwinding - the same hazard, deliberately not
+        realised on this side.  It's therefore passed to the event loop's exception
+        handler (see :meth:`asyncio.loop.call_exception_handler`) rather than raised:
+        reported and logged, but not propagated.
 
     Example::
 

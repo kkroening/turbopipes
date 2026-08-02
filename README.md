@@ -102,7 +102,7 @@ pull is in flight for each of them, and none is re-armed until your loop comes b
 item—so a chatty source can't run away from a slow consumer. A source that runs dry drops out
 quietly; the merge itself ends when the last one does.
 
-The teardown is the part worth knowing about. When you walk away early, most of the sources are
+The teardown is the part worth knowing about. When you walk away early, sources can be left
 suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
 closed—`aclose()` raises `RuntimeError: aclose(): asynchronous generator is already running`, right
 out of the cleanup path, masking whatever cancellation was in progress and leaving every one of
@@ -117,12 +117,15 @@ gets closed without ever having been advanced (an early `return` before the `asy
 its sources untouched, and they're still yours to close at that point.
 
 One more consequence of that ownership, worth knowing before you run a merge inside a `TaskGroup` or
-under a timeout: when a source's _own_ cleanup fails, where that failure goes depends on where the
-source was suspended. A source parked at a `yield` propagates it out to whoever closed the merge,
-which is what you want when you closed the merge deliberately—but it also means that a merge being
-_cancelled_ surfaces that failure in place of the `CancelledError`, so a cancelled consumer can look
-like it raised, and a `TimeoutError` can go missing. A source that was mid-pull has nobody left to
-raise to, so its failure goes to the event loop's exception handler instead—logged, not propagated.
+under a timeout: a source's _own_ cleanup failure surfaces differently depending on how that source
+was torn down—and doesn't always surface at all. A source that gets closed propagates it out to
+whoever closed the merge, which is what you want when you closed the merge deliberately—but it also
+means that a merge being _cancelled_ surfaces that failure in place of the `CancelledError`, so a
+cancelled consumer can look like it raised, and a `TimeoutError` can go missing. Only one such
+failure can propagate, though: every source still gets closed, but only the last failure raised
+survives, so if several sources fail their own cleanup the rest are dropped rather than chained onto
+it. A source that unwinds on its cancelled pull instead has nobody left to raise to, so its failure
+goes to the event loop's exception handler—logged, not propagated.
 
 ## FAQ
 

@@ -41,8 +41,9 @@ async def test_aselect__merges_in_completion_order():
 
 async def test_aselect__first_pass_completions_follow_mapping_order():
     # Every source is still unserved here, so the round-robin queue is exactly `gens`
-    # order - the one pass for which the two coincide.  This pins the batch against
-    # arbitrary `set` ordering; the round-robin test below pins which order it is.
+    # order - the one pass for which the two are *guaranteed* to coincide, whatever the
+    # sources go on to do.  This pins the batch against arbitrary `set` ordering; the
+    # round-robin test below pins which order it is.
     #
     # That first property leans on heap allocation layout, which is worth knowing before
     # relying on it.  An implementation that iterated `asyncio.wait`'s `done` set
@@ -221,8 +222,9 @@ async def test_aselect__teardown_cancels_pulls_before_closing_sources():
 
 
 async def test_aselect__teardown_closes_a_source_parked_at_its_yield():
-    # The other half of the teardown: a source whose item was just handed to the
-    # consumer has no in-flight pull to cancel, and is only cleaned up by `aclose()`.
+    # The other half of the teardown: this source's item was just handed to the consumer
+    # and it was never re-armed, so it's parked at its `yield` with no pull to cancel,
+    # and `aclose()` is the only thing that cleans it up.
     closed = []
 
     async def source(name):
@@ -329,7 +331,7 @@ async def test_aselect__teardown_does_not_report_an_unconsumed_source_failure():
 
 
 async def test_aselect__teardown_does_not_report_a_graceful_cancellation():
-    # The third way a cancelled pull can finish without carrying a cleanup failure: a
+    # Another way a cancelled pull can finish without carrying a cleanup failure: a
     # source that catches its cancellation and returns ends its own iteration, so the
     # pull completes with `StopAsyncIteration` rather than cancelling.  That's the
     # exhaustion signal - never a failure, per `_is_exhausted` - and reporting it would
