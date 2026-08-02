@@ -74,6 +74,42 @@ async def main():
                 print(f'A specific task failed, but the pipeline survives: {exc}')
 ```
 
+## 🔀 Merging Several Sources: `aselect`
+
+Sometimes the problem isn't fanning one stream _out_ across workers, but fanning several streams
+_in_. `aselect` merges a mapping of async generators into a single stream, handing you each item as
+soon as whichever source produced it, tagged with that source's key so you know who spoke.
+
+```python
+import contextlib
+import turbopipes
+
+async def main():
+    sources = {'clicks': read_clicks(), 'ticks': read_ticks()}
+    stream = turbopipes.aselect(sources)
+
+    async with contextlib.aclosing(stream):
+        async for key, task in stream:
+            try:
+                print(f'{key}: {await task}')
+            except Exception as exc:
+                print(f'{key} failed, but the other sources keep going: {exc}')
+```
+
+Same bargain as `aparallel`: you get an awaitable rather than a bare item, so a single misbehaving
+source can't tear the merge down behind your back. Backpressure is maintained per source—at most one
+pull is in flight for each of them, and none is re-armed until your loop comes back for another
+item—so a chatty source can't run away from a slow consumer. A source that runs dry drops out
+quietly; the merge itself ends when the last one does.
+
+The teardown is the part worth knowing about. When you walk away early, most of the sources are
+suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
+closed—`aclose()` raises `RuntimeError: aclose(): asynchronous generator is already running`, right
+out of the cleanup path, taking the rest of the cleanup down with it. So `aselect` cancels every
+in-flight pull and waits for it to land _before_ closing any source. This is the one corner of the
+library where `aclosing` alone wouldn't have been enough: `aselect` takes ownership of the sources
+you hand it, and closes every one of them for you.
+
 ## FAQ
 
 ### Why is the interface designed this way?
