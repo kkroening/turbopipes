@@ -61,12 +61,12 @@ measurements themselves are unaffected: the cleanup runs correctly, it just also
 
 ## Nothing runs these automatically
 
-`scripts/ci` runs mypy, pytest, pylint, isort and black, and every one of them is scoped to
-`turbopipes` and `tests` — by argument, or in `black`'s case by the `include` regex in
-`pyproject.toml`. Nothing is pointed at `doc/`, so nothing re-runs these scripts, and nothing
-compares what they print against what the document quotes. The correspondence described at the top
-of this file is hand-checked: a number on the page carries a guarantee that somebody ran the
-script, not one that anything will notice when it stops matching.
+`scripts/ci` runs mypy, pytest, pylint, isort and black, and each one is confined to `turbopipes`
+and `tests` — isort and pylint by the paths they are given, mypy by `files`, pytest by
+`testpaths`, black by its `include` regex. None of them is pointed at `doc/`, so nothing re-runs
+these scripts, and nothing compares what they print against what the document quotes. The
+correspondence described at the top of this file is hand-checked: a number on the page carries a
+guarantee that somebody ran the script, not one that anything will notice when it stops matching.
 
 Making it an enforced guarantee would be worth doing — seventeen of the eighteen scripts are
 deterministic, so a check that ran each one and asserted its output appears verbatim in
