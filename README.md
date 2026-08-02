@@ -212,9 +212,10 @@ pipelines:
     application crashes, a downstream consumer fails, or the OS sends a kill signal, all pending
     concurrent tasks are safely cancelled, preventing silent memory leaks.
 
-**📖 Want to understand the "Why"?** Read our deep-dive article where we systematically walk
-through the pitfalls of naive async pipelines and derive the `turbopipes` architecture from first
-principles:
+**📖 Want to understand the "Why"?** Read our deep-dive article, where we systematically walk
+through the pitfalls of naive async pipelines — batching with `asyncio.gather()`, hand-rolled
+`asyncio.Queue` worker pools — and derive the `turbopipes` architecture from first principles,
+through to why `aselect` has to cancel its in-flight pulls before it closes anything:
 
 #### [👉 Read: Deriving Turbopipes from First Principles (Why Async is Harder Than It Looks)](./doc/first-principles.md)
 
