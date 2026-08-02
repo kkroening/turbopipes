@@ -8,11 +8,12 @@ you asked for. Its documentation nags you about `contextlib.aclosing` on nearly 
 
 None of that is taste. Each of those decisions is the answer to a specific way that the obvious
 designs fall over — usually not on the happy path, but at the moment a consumer stops consuming.
-This document walks that road: two designs everyone writes first, exactly where each one breaks,
-and the shape that's left standing afterwards.
+This document walks that road: two designs everyone writes first, where each one breaks, and the
+shape that's left standing afterwards.
 
-Every measurement quoted below was produced by the code shown next to it, on **CPython 3.14.6**.
-If you don't believe a claim, run it.
+Every measurement quoted below was produced on **CPython 3.14.6** by a script in
+[`first-principles/`](./first-principles/) — one per block, each printing exactly the block it
+backs. If you don't believe a claim, run it.
 
 ---
 
@@ -122,10 +123,29 @@ async def naive_pool(gen, results, max_concurrent):
 ```
 
 This genuinely fixes throughput. Workers pull independently, so a straggler holds up exactly one
-worker instead of the whole window, and `maxsize` even gives you backpressure against the feeder.
-On the happy path it is fine.
+worker instead of the whole window. On the happy path it is fine.
 
-Now stop consuming. Read three results and walk away:
+It looks like it fixes backpressure too, since `maxsize` bounds the queue between the feeder and
+the workers, so the feeder blocks whenever the workers fall behind. But nothing bounds the queue on
+the *other* side. Workers put their results into `results`, which is unbounded, so the workers
+never block, so the feeder never blocks, so the source never stops. A consumer that merely
+dawdles — still there, still consuming, just slowly — finds that out:
+
+```
+consumed 1, source has produced 261  (ahead by 260)
+consumed 2, source has produced 511  (ahead by 509)
+consumed 3, source has produced 761  (ahead by 758)
+consumed 4, source has produced 1011  (ahead by 1007)
+```
+
+Fifty event-loop passes of dawdling per item, and by the fourth one the source is a thousand items
+ahead. The gap grows without bound, because nothing in this design connects the rate the consumer
+consumes at to the rate the source produces at. Whatever the source's items cost — memory, an open
+cursor, a rate-limited API call — you are paying for a thousand of them to serve four.
+
+That is the backpressure failure, and it happens with the consumer still present and still asking.
+The teardown failure is one step further on: stop consuming altogether. Read three results and walk
+away:
 
 ```
 consumed 0
@@ -134,12 +154,13 @@ consumed 2
 --- consumer walks away here ---
 workers still running : 5 of 5
 source finally ran    : False
-work items completed since we stopped consuming: 24
+work items completed since we stopped consuming: 250
 ```
 
-Nobody told the workers. Nobody told the feeder. Nobody told the source generator. Twenty-four
-further items of real work were performed on behalf of a consumer that had already left, and the
-source's `finally` — where you closed the database cursor — has not run.
+Nobody told the workers. Nobody told the feeder. Nobody told the source generator. Fifty event-loop
+passes after the consumer left, 250 further items of real work had been done on behalf of someone
+who was no longer there, and the source's `finally` — where you closed the database cursor — has
+not run.
 
 The obvious retort is "well, cancel the tasks." Yes. On every exit path, including the one where
 the consumer raised, which means a `try`/`finally`, which is fine — you write it. And then you
@@ -188,20 +209,23 @@ So the first real principle falls out, and it isn't about concurrency at all:
 > **An async generator has to be closed explicitly, by someone.** That someone is the code that
 > stopped consuming, since that is where the knowledge lives.
 
-That is the entire job of `contextlib.aclosing`, and why it appears in every `turbopipes` example
-that isn't explicitly labelled quick-and-dirty.
+That is the entire job of `contextlib.aclosing`, and why it appears in nearly every `turbopipes`
+example.
 
 ---
 
 ## 4. Deriving `aparallel`
 
-The two attempts hand us three requirements:
+The two attempts hand us four requirements — the three problems §1 opened with, plus the one §2.1
+turned up along the way:
 
 1. **No synchronization barrier.** Maintain a rolling window; yield in completion order.
 2. **One item's failure must not take the pipeline with it** — nor silently orphan its peers.
 3. **The consumer must be able to stop, and stopping must clean up** — promptly, not eventually.
+4. **The producer must not run ahead of the consumer.** The gap has to be bounded by something,
+   and the bound has to hold for a consumer that dawdles as well as for one that leaves.
 
-`aparallel` is what those three look like when you write them down.
+`aparallel` is what those four look like when you write them down.
 
 ```python
 pipeline = turbopipes.aparallel(gen, max_concurrent=10)
@@ -211,11 +235,15 @@ async with contextlib.aclosing(pipeline):
         result = await done_task
 ```
 
-Three things about that shape are worth deriving, since they're the three things people ask about.
+The rolling window answers the first requirement outright. Three things about the rest of that
+shape are worth deriving, since they're the three people ask about.
 
 ### 4.1 Why the input is an async generator, not a list
 
-Because the source's own work is work, and you want it under the consumer's control.
+Because the source's own work is work, and the only thing that can bound it is the consumer not
+asking for more. This is the requirement the queue pool missed: it bounded the queue between its
+feeder and its workers, and left the source free to run a thousand items ahead of a consumer that
+was still there and merely slow.
 
 A realistic source doesn't have the items lying around; it fetches them — a page at a time, a
 cursor batch at a time. Written as an async generator, producing the next item is itself an
@@ -237,8 +265,9 @@ Same twenty pages of work available. The consumer took three items and left. The
 paid for two pages; the list form paid for all twenty before the pipeline had run a single item.
 By the time you *have* a list, the argument about backpressure is already over.
 
-And the bound is real, not aspirational. A consumer that dawdles fifty event-loop passes between
-items, against a source that would happily produce a thousand:
+And the bound is real, not aspirational. Here is §3's measurement again — a consumer dawdling fifty
+event-loop passes between items, against a source that would happily produce a thousand — run
+against `aparallel` instead of the queue pool:
 
 ```
 consumed 1, source has produced 4  (ahead by 3)
@@ -280,8 +309,25 @@ async for done_task in pipeline:
         result = await done_task
     except Exception as exc:
         log.warning('item failed, carrying on: %s', exc)
-        # ...or `raise`, and tear the pipeline down deliberately rather than by accident
+        # ...or `raise`, and the pipeline comes down with you
 ```
+
+Carrying on is the interesting half of that choice; raising is the half that currently bites. On
+this tree, leaving an `aparallel` loop early under the `aclosing` that §4.3 is about to insist
+on — by `raise` or by `break` — does clean up, but raises on the way out, and the exception you
+left with does not survive the trip:[^aparallel-teardown]
+
+```
+break, under aclosing   -> BaseExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+raise, under aclosing   -> BaseExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  consumer's ValueError anywhere in the group, the chain, or the traceback? False
+  meanwhile, the source's finally ran? True
+```
+
+That last line is the cleanup doing its job, which is why this is a defect in the teardown rather
+than in the shape being derived here. It is still worth knowing before you write the `raise`,
+because §5.1 is an entire section on why an exception that eats the reason it was raised makes for
+a bad day, and here is the same shape arriving early.
 
 There's a second, quieter argument for it: symmetry. The input generator yields awaitables, and
 the output generator yields awaitables. `aparallel` is a transformer that preserves the shape of
@@ -298,7 +344,9 @@ consumer breaks out of the loop — it runs whenever the interpreter next gets r
 
 `aclosing` is how you make "whenever" be "now". It isn't ceremony, and it isn't defensive
 programming against an unlikely case: early exit is the *normal* case, since it's what `break`
-does, what an exception does, and what a cancelled request does.
+does, what an exception does, and what a cancelled request does. It is also, today, the path that
+trips the teardown defect §4.2 measured — the advice stands, and the bug is on the library's side
+of that line rather than yours.
 
 Nor can the library take this one off your hands, for the reason §3.1 gave: closing an async
 generator has to be *awaited*, and the only code in a position to await it is the code that
@@ -330,13 +378,16 @@ async def merge(sources):
             pulls[asyncio.create_task(anext(sources[key]))] = key
 ```
 
-Now close it, the way §3.1 taught you — `aclosing` over every source, so nothing leaks:
+Now close it, the way §3.1 taught you — `aclosing` over every source, so nothing leaks. The merge
+owns the sources it was handed, so the stack goes inside the generator, wrapped around the merge
+loop; closing the merge is then what closes the sources:
 
 ```python
-async with contextlib.AsyncExitStack() as stack:
-    for gen in sources.values():
-        await stack.enter_async_context(contextlib.aclosing(gen))
-    ...
+async def merge(sources):
+    async with contextlib.AsyncExitStack() as stack:
+        for gen in sources.values():
+            await stack.enter_async_context(contextlib.aclosing(gen))
+        ...
 ```
 
 And then a consumer walks away while two of the three sources are mid-pull:
@@ -348,8 +399,12 @@ sources whose finally ran: ['chatty']
 frames still live        : ['quiet1', 'quiet2']
 ```
 
-This is where merging stops being a variation on §4 and becomes its own problem. Everywhere else
-in this document, `aclosing` was the answer. Here it's the thing that raised.
+This is where merging stops being a variation on §4 and becomes its own problem, and the
+difference is worth being precise about. For `aparallel`, `aclosing` over the pipeline is the
+right answer: the defect §4.2 measured is a bug in an otherwise sound design, and fixing the
+teardown leaves the shape intact. Here it is the *shape* that's wrong. No amount of careful
+implementation rescues `aclosing` over the sources, because a source suspended mid-pull cannot be
+closed at all — which is the next section.
 
 ### 5.1 `aclose()` will not touch a generator that's inside its own body
 
@@ -389,13 +444,18 @@ path itself. Here is the same merge, torn down because the consumer raised a `Va
 
 ```
 the caller sees: RuntimeError: aclose(): asynchronous generator is already running
-chain          : ['RuntimeError: aclose(): asynchronous generator is already running', 'GeneratorExit: ']
+chain          : RuntimeError: aclose(): asynchronous generator is already running
+                 RuntimeError: aclose(): asynchronous generator is already running
+                 GeneratorExit: 
+the consumer's ValueError anywhere in it: False
 ```
 
-The consumer's `ValueError` is not in that chain. It is gone — replaced, on its way out, by a
-complaint about generator state raised from inside the cleanup that was supposed to be handling
-it. A teardown bug that eats the diagnosis of the bug that triggered the teardown is a genuinely
-bad day, and in the merge above it is one `break` away.
+One `RuntimeError` per source that was mid-pull — two of the three, here — and then the
+`GeneratorExit` that `aclose()` threw in, which has no context of its own. The chain ends there,
+and the consumer's `ValueError` is gone: replaced, on its way out, by a complaint about generator
+state raised from inside the cleanup that was supposed to be handling it. A teardown bug that eats
+the diagnosis of the bug that triggered the teardown is a genuinely bad day, and in the merge above
+it is one `break` away.
 
 ### 5.2 What does reach a running generator: cancellation
 
@@ -521,24 +581,37 @@ protocol where it started, and the yielded type stays honestly `asyncio.Task[T]`
 ### 5.5 Backpressure survives the merge
 
 Merging is a natural place to lose backpressure, since it's tempting to let each source run and
-buffer whatever arrives. `aselect` doesn't: one pull in flight per source, and a source is re-armed
-only once the consumer has come back for the next item. In the merge above, that's the re-arming
-line sitting **after** the `yield` rather than before it — a one-line difference that is the whole
-guarantee.
+buffer whatever arrives. `aselect` doesn't, and the reason is the one §4.1 already gave: the merge
+holds at most one pull in flight per source, and is itself an async generator, so between `yield`s
+it isn't running — and while it isn't running it isn't arming anything. A source can't outrun the
+consumer because for as long as the consumer is away, nothing is asking it for anything.
 
-Two sources that never await, so they'd run away instantly if allowed, against a consumer that
-dawdles twenty loop passes per item:
+What the re-arming line sitting **after** the `yield` rather than before it buys is not that
+guarantee, but its exactness. Two sources that never await, so they'd run away instantly if
+allowed, against a consumer that dawdles twenty loop passes per item, with the line in each
+position:
 
 ```
-consumed 1, produced 2
-consumed 2, produced 3
-consumed 3, produced 4
-consumed 4, produced 5
+re-arm AFTER the yield (what aselect does):
+  consumed 1, produced 2  (ahead by 1)
+  consumed 2, produced 3  (ahead by 1)
+  consumed 3, produced 4  (ahead by 1)
+  consumed 4, produced 5  (ahead by 1)
+re-arm BEFORE the yield:
+  consumed 1, produced 3  (ahead by 2)
+  consumed 2, produced 4  (ahead by 2)
+  consumed 3, produced 5  (ahead by 2)
+  consumed 4, produced 6  (ahead by 2)
 ```
 
-The gap doesn't grow. With one pull in flight per source, a source can hold at most a single
-produced-but-unconsumed item, and the pull that would produce the next one isn't even created
-until the consumer comes back.
+Neither column grows — set that against §3's ladder, where the gap passed a thousand by the fourth
+item. Moving the line takes the bound from two produced-but-unconsumed items per source down to
+one, which is worth having, and is a different thing from being what bounds it at all.
+
+(`produced` is read after the consumer has finished dawdling, by which point a pull armed during
+the previous `yield` has been stepped. Read it at the instant of the consume instead and the same
+run yields a different ladder — one of several ways a measurement like this can be quietly
+mis-stated.)
 
 ### 5.6 One last trap: what `return_exceptions=True` does not bound
 
@@ -555,7 +628,9 @@ escaped asyncio.run: KeyboardInterrupt
 
 `gather` stores a `BaseException` as readily as a `ValueError`. What keeps `KeyboardInterrupt` and
 `SystemExit` out of that list is a different mechanism sitting one layer down — `Task`'s step
-handler, which special-cases exactly those two, storing them *and* re-raising into the loop:
+handler, which special-cases exactly those two, storing them *and* re-raising into the loop (shown
+here in the pure-Python `asyncio/tasks.py`; on a default build it's the `_asyncio` accelerator that
+runs, carrying the same special case):
 
 ```python
 except (KeyboardInterrupt, SystemExit) as exc:
@@ -575,7 +650,7 @@ explanation will be adjusting a flag that was never the thing drawing that line.
 
 ## 6. The API, in hindsight
 
-Every part of the surface that looks like a preference turns out to be a receipt:
+The parts of the surface that look most like preferences turn out to be receipts:
 
 | The bit that looks arbitrary | What it's actually paying for |
 | --- | --- |
@@ -584,7 +659,7 @@ Every part of the surface that looks like a preference turns out to be a receipt
 | Results come out in **completion order** | No chunk barrier, so a straggler costs one slot rather than the whole window (§2) |
 | Pairs with **`aclosing`** | Async generator cleanup is explicit; the code that stops consuming is the code that knows (§3.1) |
 | `aselect` **cancels before it closes** | `aclose()` cannot touch a source suspended inside its own body — and fails loudly from the cleanup path when you try (§5.1, §5.2) |
-| `aselect` re-arms **after** the yield | One pull in flight per source; a fast source can't outrun a slow consumer (§5.5) |
+| `aselect` re-arms **after** the yield | Tightens the bound to exactly one produced-but-unconsumed item per source, rather than two (§5.5) |
 
 None of this is exotic. It is what's left after you take the two designs everyone writes first,
 run them into a consumer that stops early, and refuse to look away from what happens next.
@@ -593,4 +668,14 @@ run them into a consumer that stops early, and refuse to look away from what hap
 
 **Back to** [the README](../README.md) **·** the implementations, with their reasoning written
 out at length, are [`_aparallel.py`](../turbopipes/_aparallel.py) and
-[`_aselect.py`](../turbopipes/_aselect.py).
+[`_aselect.py`](../turbopipes/_aselect.py) **·** the scripts behind every measurement above are in
+[`first-principles/`](./first-principles/).
+
+[^aparallel-teardown]: A known defect in `aparallel`'s teardown, not a property of the design it's
+    part of. When a consumer leaves an `aparallel` loop early under `aclosing`, the close raises a
+    `BaseExceptionGroup` wrapping the `GeneratorExit` from its own `yield`, and any exception the
+    consumer left with is discarded rather than chained. The cleanup itself is correct — the source
+    is closed and the in-flight tasks are cancelled — so the fix is a bug fix rather than a change
+    to the shape §4.3 derives. Measured by
+    [`first-principles/04_3_early_exit_today.py`](./first-principles/04_3_early_exit_today.py),
+    which is expected to change when the defect is fixed.
