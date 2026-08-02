@@ -44,10 +44,19 @@ def _report_cleanup_failure(key: _K, task: asyncio.Task[_T]) -> None:
     visible without re-raising it here, where it would only displace the
     ``GeneratorExit`` or ``CancelledError`` that's unwinding the merge.
 
-    A pull that unwound cleanly, or that had already completed before the teardown
-    reached it, carries no such failure and is left alone.
+    A cancelled pull carries no such failure in three of the four ways it can finish:
+    the source propagated the cancellation; it caught the cancellation and returned,
+    ending its own iteration, so that the pull raises ``StopAsyncIteration`` rather
+    than cancelling; or it swallowed the cancellation and yielded once more, leaving
+    the pull with an ordinary value.  Only an exception raised while unwinding is a
+    cleanup failure.
+
+    A pull that had already *completed* before the teardown reached it isn't one
+    either - it carries whatever the source produced or raised on its own account -
+    but that case never arrives here, because the caller hands over only the pulls it
+    actually cancelled.
     """
-    exc = None if task.cancelled() else task.exception()
+    exc = None if task.cancelled() or _is_exhausted(task) else task.exception()
     if exc is not None:
         asyncio.get_running_loop().call_exception_handler(
             {
@@ -137,14 +146,25 @@ async def aselect(
         which way it goes isn't something the caller controls: it turns on where that
         source happened to be suspended when consumption stopped.  A source parked at
         its ``yield`` is closed via ``aclose()``, so anything raised out of its
-        ``finally`` propagates to whoever closed the merge - the better of the two
-        outcomes, and the reason that path is left as it is.  A source that was mid-pull
-        is cancelled instead, and its failure lands on the cancelled pull, at a point
-        where the merge is already unwinding and no consumer remains to receive it;
-        re-raising it there would only displace the ``GeneratorExit`` or
-        ``CancelledError`` doing the unwinding.  It's therefore passed to the event
-        loop's exception handler (see :meth:`asyncio.loop.call_exception_handler`)
-        rather than raised: reported and logged, but not propagated.
+        ``finally`` propagates to whoever closed the merge - the better outcome when
+        the merge is being closed *explicitly*, and the reason that path is left as it
+        is.  It costs something when the merge is being *cancelled* instead: the
+        propagated failure replaces the ``CancelledError``, so a cancelled consumer
+        surfaces as having raised that failure, on a task that reports itself as not
+        cancelled - and an :func:`asyncio.timeout` around the merge ends in the
+        source's exception rather than in ``TimeoutError``.  Since the sources are this
+        generator's to close, a single one with a failing ``finally`` is enough to do
+        that, which is worth weighing before running a merge inside an
+        :class:`asyncio.TaskGroup` or under a timeout.
+
+        A source that was *mid-pull* when consumption stopped is cancelled rather than
+        closed, and its failure lands on the cancelled pull, at a point where the merge
+        is already unwinding and no consumer remains to receive it; re-raising it there
+        would only displace the ``GeneratorExit`` or ``CancelledError`` doing the
+        unwinding - the same hazard, deliberately not realised on this side.  It's
+        therefore passed to the event loop's exception handler (see
+        :meth:`asyncio.loop.call_exception_handler`) rather than raised: reported and
+        logged, but not propagated.
 
     Example::
 

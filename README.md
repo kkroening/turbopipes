@@ -116,6 +116,14 @@ its body runs—including the part that arranges those closes—until you first 
 gets closed without ever having been advanced (an early `return` before the `async for`, say) leaves
 its sources untouched, and they're still yours to close at that point.
 
+One more consequence of that ownership, worth knowing before you run a merge inside a `TaskGroup` or
+under a timeout: when a source's _own_ cleanup fails, where that failure goes depends on where the
+source was suspended. A source parked at a `yield` propagates it out to whoever closed the merge,
+which is what you want when you closed the merge deliberately—but it also means that a merge being
+_cancelled_ surfaces that failure in place of the `CancelledError`, so a cancelled consumer can look
+like it raised, and a `TimeoutError` can go missing. A source that was mid-pull has nobody left to
+raise to, so its failure goes to the event loop's exception handler instead—logged, not propagated.
+
 ## FAQ
 
 ### Why is the interface designed this way?

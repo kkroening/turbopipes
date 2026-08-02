@@ -327,6 +327,48 @@ async def test_aselect__teardown_does_not_report_an_unconsumed_source_failure():
     assert reported == []
 
 
+async def test_aselect__teardown_does_not_report_a_graceful_cancellation():
+    # The third way a cancelled pull can finish without carrying a cleanup failure: a
+    # source that catches its cancellation and returns ends its own iteration, so the
+    # pull completes with `StopAsyncIteration` rather than cancelling.  That's the
+    # exhaustion signal - never a failure, per `_is_exhausted` - and reporting it would
+    # name a source that raised nothing.
+    closed = []
+
+    async def chatty():
+        while True:
+            yield 'chatty'
+
+    async def graceful():
+        try:
+            await asyncio.Event().wait()  # nothing ever sets it
+            yield 'unreachable'  # pragma: no cover
+        except asyncio.CancelledError:
+            pass  # treat cancellation as "stop producing", and return normally
+        finally:
+            closed.append('graceful')
+
+    reported = []
+
+    def handle_exception(_loop, context):
+        reported.append(context)
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(handle_exception)
+    try:
+        stream = turbopipes.aselect({'chatty': chatty(), 'graceful': graceful()})
+        async with contextlib.aclosing(stream):
+            async for _key, task in stream:
+                await task
+                break  # walk away with 'graceful' mid-pull
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert reported == []
+    assert closed == ['graceful']
+
+
 async def test_aselect__cancellation_closes_sources():
     closed = []
     pulling = {name: asyncio.Event() for name in ('a', 'b')}
