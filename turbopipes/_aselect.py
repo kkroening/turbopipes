@@ -41,8 +41,8 @@ def _report_cleanup_failure(key: _K, task: asyncio.Task[_T]) -> None:
     than on any caller: by then the merge is already unwinding and there's nobody left
     to raise it to.  Handing it to :meth:`asyncio.loop.call_exception_handler` -
     asyncio's own route for an exception that nobody can receive - keeps the failure
-    visible without displacing whatever is unwinding the merge, since reporting can't
-    raise the way a re-raise out of that cleanup path would.
+    visible without re-raising it here, where it would only displace the
+    ``GeneratorExit`` or ``CancelledError`` that's unwinding the merge.
 
     A pull that unwound cleanly, or that had already completed before the teardown
     reached it, carries no such failure and is left alone.
