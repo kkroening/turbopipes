@@ -71,6 +71,22 @@ guarantee that somebody ran the script, not one that anything will notice when i
 Making it an enforced guarantee would be worth doing — seventeen of the eighteen scripts are
 deterministic, so a check that ran each one and asserted its output appears verbatim in
 [`../first-principles.md`](../first-principles.md) would be a real assertion rather than a smoke
-test. Whether such a check belongs in this repository's `tests/`, or somewhere of its own, is a
+test.
+
+Comparing stdout alone would not be enough, though, and it comes up short in two opposite
+directions — both of which involve the `aparallel` teardown defect, and only one of which is
+visible from the output:
+
+-   [`04_1_source_io.py`](04_1_source_io.py) and [`04_1_bounded_source.py`](04_1_bounded_source.py)
+    swallow the `BaseExceptionGroup` on the way out and exit `0` with empty stderr, so the defect
+    never reaches their stdout. A stdout-only check passes today and would go on passing unchanged
+    once the defect is fixed, registering neither state. These want an expected **exit shape** as
+    well.
+-   [`04_3_early_exit_today.py`](04_3_early_exit_today.py) is the reverse: it catches the escaping
+    exception and prints it, so its *stdout* is what encodes the defect. A stdout-only check would
+    start **failing** there the moment the defect is fixed. This one wants an
+    **expected-to-change** marker, not a tighter assertion.
+
+Whether such a check belongs in this repository's `tests/`, or somewhere of its own, is a
 question about what that suite is for rather than one this directory should answer on its own, and
 it is left open as a follow-up for the maintainer.

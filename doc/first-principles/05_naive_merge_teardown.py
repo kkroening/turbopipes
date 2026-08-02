@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """§5 — the naive merge, closed the way §3.1 taught you, with sources mid-pull.
 
-`aclosing` over every source is the answer everywhere else in the document.  Here
-it is the thing that raises: two of the three sources are suspended at an `await`
-inside their own bodies when consumption stops, and `aclose()` refuses that state.
+`aclosing` over every source is not sufficient by itself here: two of the three
+sources are suspended at an `await` inside their own bodies when consumption
+stops, and `aclose()` refuses that state.  The arrangement isn't wrong so much as
+incomplete — something has to reach a mid-pull source before it can be closed at
+all, which is what §5.2 adds in front of it.
 """
 
 import asyncio

@@ -13,8 +13,10 @@ shape that's left standing afterwards.
 
 Every measurement quoted below was produced on **CPython 3.14.6** by a script in
 [`first-principles/`](./first-principles/) — one per block, each printing exactly the block it
-backs, bar two whose variability is called out where they appear. If you don't believe a claim,
-run it.
+backs, seventeen of the eighteen byte-for-byte on demand. The exception is a wall-clock benchmark
+whose sampled figures move in the last digit where they appear; separately, one block measures a
+defect rather than a design, and is expected to change when that defect is fixed. Both are called
+out where they appear. If you don't believe a claim, run it.
 
 ---
 
@@ -593,7 +595,8 @@ Merging is a natural place to lose backpressure, since it's tempting to let each
 buffer whatever arrives. `aselect` doesn't, and the reason is the one §4.1 already gave: the merge
 holds at most one pull in flight per source, and is itself an async generator, so between `yield`s
 it isn't running — and while it isn't running it isn't arming anything. A source can't outrun the
-consumer because for as long as the consumer is away, nothing is asking it for anything.
+consumer because nothing *new* is armed while the consumer is away: a source runs at most the one
+pull it was already holding, which is the gap of 1 in the ladder below rather than 0.
 
 What the re-arming line sitting **after** the `yield` rather than before it buys is not that
 guarantee, but its exactness. Two sources that never await, so they'd run away instantly if
