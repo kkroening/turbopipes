@@ -131,6 +131,61 @@ looks exactly like one whose source simply propagated the cancellation it was se
 reported at all—and a `finally` that merely awaits something already cancelled is enough to land
 there.
 
+## 🧱 The Pieces Underneath: `ataskify`, `atag`, `amerge`
+
+`aselect` isn't primitive—it's sugar, and thin enough to be worth reading:
+
+```python
+turbopipes.amerge([turbopipes.atag(key, turbopipes.ataskify(gen, label=key))
+                   for key, gen in sources.items()])
+```
+
+Three separate jobs, and you can take any one of them on its own:
+
+- **`ataskify(gen)`** turns a value-yielding generator into a task-yielding one. This is where "a bad
+  source can't tear the merge down" actually comes from—the failure becomes a task that raises when
+  _you_ await it, instead of an exception thrown out of the iteration.
+- **`atag(key, gen)`** staples a constant key onto whatever a generator yields. It doesn't know or
+  care what that is.
+- **`amerge(gens)`** interleaves a _sequence_ of generators in completion order, and knows nothing
+  about keys or tasks. On its own it's the blunt version: if one source raises, the whole merge comes
+  down and takes its peers with it—exactly like an `async for` over a single generator that raises.
+  That's the behaviour you get when you _don't_ wrap your sources in `ataskify` first.
+
+The order matters, and the tempting order is the wrong one. Tag the **taskified** generator, not the
+source. Tag the source directly and the key ends up _inside_ the task, where reading it means
+awaiting—and by then the pull has already happened. Deciding _how_ to await based on _which_ source
+it is (the whole reason you wanted keys) is no longer possible. It only bites in the failure case,
+which is where it hurts most.
+
+So reach past `aselect` whenever it doesn't fit: drop `atag` if your events already say who they are,
+drop `ataskify` if one source failing genuinely _should_ end everything, or keep both and get your
+keys from somewhere other than a mapping.
+
+### Cleanup, in two pieces
+
+Two more exports, both extracted from the teardown described above, because getting it right in one
+place and importing it beats getting it right in four:
+
+- **`aclosing_all(gens)`** is bulk `contextlib.aclosing`. Every generator gets closed even if closing
+  an earlier one raises—which a nested stack of `aclosing` blocks won't do for you, since the first
+  failure there skips all the rest.
+- **`asettle(tasks)`** cancels in-flight pulls and waits for them to land, which is the step that
+  makes a mid-`__anext__()` generator closeable at all.
+
+They pair, and the nesting is not optional—settle _inside_, so it happens before the closes:
+
+```python
+async with turbopipes.aclosing_all(gens):
+    try:
+        ...
+    finally:
+        await turbopipes.asettle(pulls)
+```
+
+Do it the other way round and you're closing generators that are still running, which is the
+`RuntimeError` this whole section exists to avoid.
+
 ## FAQ
 
 ### Why is the interface designed this way?
