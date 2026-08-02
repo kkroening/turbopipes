@@ -409,12 +409,11 @@ frames still live        : ['quiet1', 'quiet2']
 This is where merging stops being a variation on §4 and becomes its own problem, and the
 difference is worth being precise about. It isn't that one arrangement survives and the other has
 to be thrown out — the arrangement survives in both cases. What differs is what each one still
-needs. For `aparallel`, the teardown is correct and only its exception
-propagation is broken: the defect §4.2 measured cancels the tasks and closes the source exactly as
-it should, and then raises on the way out. For a merge, the teardown is *incomplete*. `aclosing`
-over the sources is not sufficient by itself, and no amount of care in the closing makes it so,
-because a source suspended mid-pull cannot be closed at all until something else reaches it
-first — which is the next section.
+needs. For `aparallel`, the teardown is correct and only its exception propagation is broken: the
+defect §4.2 measured cancels the tasks and closes the source exactly as it should, and then raises
+on the way out. For a merge, the teardown is *incomplete*. `aclosing` over the sources is not
+sufficient by itself, and no amount of care in the closing makes it so, because a source suspended
+mid-pull cannot be closed at all until something else reaches it first — which is the next section.
 
 ### 5.1 `aclose()` will not touch a generator that's inside its own body
 
