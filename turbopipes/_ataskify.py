@@ -59,27 +59,27 @@ async def ataskify(
         in-flight pull is cancelled and awaited before ``gen`` is closed; see
         :func:`asettle`.
 
-        Which of those a caller gets depends on how it tears this generator down, and
-        the two differ.  Cancelling the in-flight pull gets ``gen``'s teardown for
-        free: the cancellation unwinds this body, whose own cleanup settles and closes
-        ``gen`` on the way out - the arrangement that lets a merge upstream cancel one
-        pull and have a whole chain come apart correctly beneath it.  Calling
-        ``aclose()`` while a pull is still outstanding does not, and raises the
-        ``RuntimeError`` above, since this generator is itself mid-``await`` - exactly
-        as for any other async generator, and the reason a merge settles before it
-        closes rather than relying on ``aclose()`` alone.
+        A caller can tear this generator down two ways, and they differ.  Cancelling
+        the task that is awaiting this generator's ``__anext__()`` gets ``gen``'s
+        teardown for free: the cancellation unwinds this body, whose own cleanup
+        settles and closes ``gen`` on the way out - the arrangement that lets a merge
+        upstream cancel one pull and have a whole chain come apart correctly beneath
+        it.  Calling ``aclose()`` while a pull is still outstanding does not, and
+        raises the ``RuntimeError`` in :func:`asettle`, since this generator is itself
+        mid-``await`` - exactly as for any other async generator, and the reason a
+        merge settles before it closes rather than relying on ``aclose()`` alone.
 
         An ordinary ``async for`` under :func:`contextlib.aclosing` is never mid-pull
         when it closes - the loop only reaches the close between items, with no pull
         outstanding - so the distinction doesn't arise for the usage above.
 
         ``label`` is diagnostics only: it names ``gen`` if it raises from its own
-        ``finally`` in response to that cancellation - a failure that reaches no
-        consumer and is reported to the event loop's exception handler instead (see
-        :func:`asettle`).  It exists because this is the only layer positioned to *see*
-        such a failure, and also the only one with no other reason to know what the
-        source is called; a caller that has a name for it therefore has to hand that
-        name down, or the report can't say which source it was.
+        ``finally`` in response to its in-flight pull being cancelled - a failure that
+        reaches no consumer and is reported to the event loop's exception handler
+        instead (see :func:`asettle`).  It exists because this is the only layer
+        positioned to *see* such a failure, and also the only one with no other reason
+        to know what the source is called; a caller that has a name for it therefore
+        has to hand that name down, or the report can't say which source it was.
     """
     armed: list[asyncio.Task[_T]] = []
 

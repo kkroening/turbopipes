@@ -191,10 +191,11 @@ async def test_amerge__cancellation_closes_sources():
 
 async def test_amerge__close_propagates_the_last_source_cleanup_failure():
     # A source that fails its *own* `aclose()` reaches whoever closed the merge, having
-    # travelled up through three nested `aclosing` scopes - `amerge`'s own, plus one per
-    # source inside `ataskify`.  Exercised through the full composition rather than
-    # against `aclosing_all` directly, since the layering is what could break it: the
-    # failure has to survive being re-raised out of two intermediate generator frames.
+    # travelled up through five nested `aclosing` scopes - `amerge`'s own, plus one per
+    # source inside `atag` and another inside `ataskify`.  Exercised through the full
+    # `amerge` -> `atag` -> `ataskify` -> source composition rather than against
+    # `aclosing_all` directly, since the layering is what could break it: the failure
+    # has to survive being re-raised out of three intermediate generator frames.
     class MockError(Exception):
         pass
 
@@ -214,12 +215,15 @@ async def test_amerge__close_propagates_the_last_source_cleanup_failure():
 
     sources = [make_source('a'), make_source('b')]
     stream = turbopipes.amerge(
-        [turbopipes.ataskify(gen, label=name) for name, gen in zip('ab', sources)]
+        [
+            turbopipes.atag(name, turbopipes.ataskify(gen, label=name))
+            for name, gen in zip('ab', sources)
+        ]
     )
 
     with pytest.raises(MockError) as excinfo:
         async with contextlib.aclosing(stream):
-            async for task in stream:
+            async for _key, task in stream:
                 await task
                 break  # walk away early, leaving both sources parked at their yields
 
@@ -247,9 +251,12 @@ async def test_amerge__cancelled_consumer_surfaces_a_source_cleanup_failure():
             raise MockError('cleanup a')
 
     async def consume():
-        stream = turbopipes.amerge([turbopipes.ataskify(source(), label='a')])
+        stream = turbopipes.amerge(
+            [turbopipes.atag('a', turbopipes.ataskify(source(), label='a'))]
+        )
         async with contextlib.aclosing(stream):
-            async for task in stream:
+            async for key, task in stream:
+                assert key == 'a'  # the tag survives the chain it rode up
                 await task
                 consuming.set()
                 # Park the consumer with the source idle at its `yield` and no pull in

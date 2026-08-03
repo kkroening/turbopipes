@@ -97,13 +97,14 @@ async def asettle(
 
     Note:
         ``label`` applies to the *call*, not to a task, so it's meaningful only when
-        settling a single task.  Settling several in one call can still report a
-        failure, but can't say which task it came from - and splitting into one
-        ``asettle([task], label=...)`` per task to get labels back would serialise the
-        cancellations, since each call cancels and then waits for completion before the
-        next task is even cancelled.  :func:`~turbopipes.ataskify` is the single-task
-        caller, and names its source; :func:`~turbopipes.amerge` settles N at once and
-        deliberately passes no label rather than paying that cost.
+        settling a single task.  Settling several in one call still reports every
+        failure, but attributes *all* of them to ``label`` - a wrong name rather than a
+        missing one - so a multi-task settle should pass none.  Splitting into one
+        ``asettle([task], label=...)`` per task to get real labels back would serialise
+        the cancellations, since each call cancels and then waits for completion before
+        the next task is even cancelled.  :func:`~turbopipes.ataskify` is the
+        single-task caller, and names its source; :func:`~turbopipes.amerge` settles N
+        at once and deliberately passes no label rather than paying that cost.
     """
     tasks = [*tasks]
     cancelled = [task for task in tasks if not task.done()]
