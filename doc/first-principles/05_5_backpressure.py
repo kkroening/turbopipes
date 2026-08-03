@@ -11,7 +11,9 @@ between yields it isn't running, and while it isn't running it isn't arming
 anything.  What moving the line changes is how *tight* the bound is — one
 produced-but-unconsumed item across the merge rather than two.  The count is
 merge-wide, since `produced` below is one counter shared by both sources;
-counted per source the two positions are identical, at one item each.
+counted per source neither position exceeds one item.  The merge-wide
+difference comes from whether the source just consumed from stays armed while
+the consumer is away.
 
 Sampling point matters here and is easy to get wrong: `produced` is read after
 the consumer has finished dawdling, by which time a pull armed during the
