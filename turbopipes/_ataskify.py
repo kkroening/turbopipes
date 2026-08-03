@@ -57,10 +57,21 @@ async def ataskify(
         consumer all of them at once, losing both readiness ordering and backpressure.
         A generator in that state has ``ag_running`` set and cannot be closed, so the
         in-flight pull is cancelled and awaited before ``gen`` is closed; see
-        :func:`asettle`.  A caller closing *this* generator gets that for free - the
-        cancellation reaches ``gen`` through this body's own cleanup - which is the
-        arrangement that lets a merge upstream cancel one pull and have a whole chain
-        unwind correctly beneath it.
+        :func:`asettle`.
+
+        Which of those a caller gets depends on how it tears this generator down, and
+        the two differ.  Cancelling the in-flight pull gets ``gen``'s teardown for
+        free: the cancellation unwinds this body, whose own cleanup settles and closes
+        ``gen`` on the way out - the arrangement that lets a merge upstream cancel one
+        pull and have a whole chain come apart correctly beneath it.  Calling
+        ``aclose()`` while a pull is still outstanding does not, and raises the
+        ``RuntimeError`` above, since this generator is itself mid-``await`` - exactly
+        as for any other async generator, and the reason a merge settles before it
+        closes rather than relying on ``aclose()`` alone.
+
+        An ordinary ``async for`` under :func:`contextlib.aclosing` is never mid-pull
+        when it closes - the loop only reaches the close between items, with no pull
+        outstanding - so the distinction doesn't arise for the usage above.
 
         ``label`` is diagnostics only: it names ``gen`` if it raises from its own
         ``finally`` in response to that cancellation - a failure that reaches no

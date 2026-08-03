@@ -11,7 +11,11 @@ _T = TypeVar('_T')
 
 
 def _report_cleanup_failure(label: object, task: asyncio.Task[Any]) -> None:
-    """Reports a source's own cleanup failure, if its cancelled pull carries one.
+    """Reports a cancelled task's own cleanup failure, if it carries one.
+
+    Everything below is framed in terms of a source generator and its pull, since within
+    this library the cancelled task is always the latter - but nothing here inspects
+    what the task was doing, and the report is worded to match.
 
     A source that unwinds on the cancellation of its in-flight pull raises anything from
     its own ``finally`` onto that cancelled pull rather than onto any caller: by then
@@ -47,13 +51,12 @@ def _report_cleanup_failure(label: object, task: asyncio.Task[Any]) -> None:
     """
     exc = None if task.cancelled() or is_exhausted(task) else task.exception()
     if exc is not None:
-        source = 'a source' if label is None else f'source {label!r}'
+        subject = 'a task' if label is None else f'task {label!r}'
         asyncio.get_running_loop().call_exception_handler(
             {
                 'message': (
-                    f'{source} raised during its own cleanup while the surrounding '
-                    f'pipeline was being torn down; there was no consumer left to '
-                    f'raise it to'
+                    f'{subject} raised from its own cleanup after being cancelled; '
+                    f'there was nobody left to raise it to'
                 ),
                 'exception': exc,
                 'task': task,
@@ -91,6 +94,16 @@ async def asettle(
     here are eligible - a pull that had already completed carries an ordinary result or
     failure that a consumer merely walked away from, and reporting that as a cleanup
     failure would be a false log line.
+
+    Note:
+        ``label`` applies to the *call*, not to a task, so it's meaningful only when
+        settling a single task.  Settling several in one call can still report a
+        failure, but can't say which task it came from - and splitting into one
+        ``asettle([task], label=...)`` per task to get labels back would serialise the
+        cancellations, since each call cancels and then waits for completion before the
+        next task is even cancelled.  :func:`~turbopipes.ataskify` is the single-task
+        caller, and names its source; :func:`~turbopipes.amerge` settles N at once and
+        deliberately passes no label rather than paying that cost.
     """
     tasks = [*tasks]
     cancelled = [task for task in tasks if not task.done()]
@@ -110,8 +123,15 @@ async def aclosing_all(
 
     The bulk counterpart to :func:`contextlib.aclosing`, for the case where ownership of
     several generators is taken at once - a merge over its sources, most obviously.
-    Every generator is closed even if closing an earlier one raises, which a stack of
-    nested ``aclosing`` blocks would not do: the first failure there skips the rest.
+
+    What it buys is *dynamic arity*.  Nested ``aclosing`` blocks are written lexically,
+    one ``async with`` per generator, which can't be done over a sequence whose length is
+    only known at runtime; :class:`contextlib.AsyncExitStack` is the way to build that
+    stack programmatically, and this is that pattern packaged.  It is not a stronger
+    guarantee than nesting gives - both keep unwinding past a close that raises, so
+    every generator is closed either way.  A sequential ``for gen in gens:
+    await gen.aclose()`` is the construction that *doesn't*, since the first failure
+    abandons the rest of the loop.
 
     Note:
         Only the *last* exception raised by a close propagates; the others are

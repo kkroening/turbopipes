@@ -64,9 +64,11 @@ async def amerge(
 
         Whatever a source raises from its own cleanup is absorbed here rather than
         re-raised: by then the merge is unwinding and there is no consumer left to
-        receive it.  See :func:`asettle` for why that is where such a failure lands, and
-        :func:`~turbopipes.aselect` for a merge that reports those failures to the event
-        loop's exception handler rather than dropping them.
+        receive it.  It is still reported to the event loop's exception handler rather
+        than discarded - see :func:`asettle` - but this merge has no name to give its
+        sources, so the report can't say which one it was.  See
+        :func:`~turbopipes.aselect` for a merge that can, having a key to hand down as
+        :func:`~turbopipes.ataskify`'s ``label``.
 
     Example::
 

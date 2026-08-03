@@ -25,9 +25,11 @@ async def test_aclosing_all__closes_every_generator():
 
 
 async def test_aclosing_all__closes_the_rest_after_one_close_raises():
-    # The property that a stack of nested `aclosing` blocks would not give: there, the
-    # first failing close skips every close outside it.  Here every generator is closed
-    # regardless, and one failure propagates once the rest have been dealt with.
+    # Every generator is closed regardless, and one failure propagates once the rest
+    # have been dealt with.  Nested `aclosing` blocks behave the same way, so this pins
+    # `aclosing_all`'s own contract rather than a contrast with them; what it has over
+    # nesting is dynamic arity, which no assertion here can express.  A sequential
+    # `for gen in gens: await gen.aclose()` is what this rules out.
     class MockError(Exception):
         pass
 

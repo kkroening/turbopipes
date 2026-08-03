@@ -223,7 +223,7 @@ async def test_ataskify__reports_without_a_label_when_none_is_given():
         loop.set_exception_handler(previous_handler)
 
     assert len(reported) == 1
-    assert 'a source raised' in reported[0]['message']
+    assert 'a task raised' in reported[0]['message']
 
 
 async def test_ataskify__never_advanced_leaves_the_source_untouched():

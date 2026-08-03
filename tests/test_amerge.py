@@ -189,6 +189,87 @@ async def test_amerge__cancellation_closes_sources():
     assert sorted(closed) == ['a', 'b']
 
 
+async def test_amerge__close_propagates_the_last_source_cleanup_failure():
+    # A source that fails its *own* `aclose()` reaches whoever closed the merge, having
+    # travelled up through three nested `aclosing` scopes - `amerge`'s own, plus one per
+    # source inside `ataskify`.  Exercised through the full composition rather than
+    # against `aclosing_all` directly, since the layering is what could break it: the
+    # failure has to survive being re-raised out of two intermediate generator frames.
+    class MockError(Exception):
+        pass
+
+    closed = []
+
+    def make_source(name):
+        async def source():
+            try:
+                while True:
+                    await asyncio.sleep(0)
+                    yield name
+            finally:
+                closed.append(name)
+                raise MockError(f'cleanup {name}')
+
+        return source()
+
+    sources = [make_source('a'), make_source('b')]
+    stream = turbopipes.amerge(
+        [turbopipes.ataskify(gen, label=name) for name, gen in zip('ab', sources)]
+    )
+
+    with pytest.raises(MockError) as excinfo:
+        async with contextlib.aclosing(stream):
+            async for task in stream:
+                await task
+                break  # walk away early, leaving both sources parked at their yields
+
+    # Both are closed even though the first close raised; only the last failure raised
+    # survives, rather than being chained onto the others.
+    assert sorted(closed) == ['a', 'b']
+    assert str(excinfo.value) == f'cleanup {closed[-1]}'
+
+
+async def test_amerge__cancelled_consumer_surfaces_a_source_cleanup_failure():
+    # The sharp edge the README warns about before running a merge under a timeout: a
+    # source failing its own `aclose()` displaces the `CancelledError` that was doing
+    # the unwinding, so the cancelled task reports itself as *not* cancelled and raises
+    # the source's exception instead.  Nothing else in the suite pins this.
+    class MockError(Exception):
+        pass
+
+    consuming = asyncio.Event()
+
+    async def source():
+        try:
+            yield 'item'
+            await asyncio.Event().wait()  # pragma: no cover - cancelled first
+        finally:
+            raise MockError('cleanup a')
+
+    async def consume():
+        stream = turbopipes.amerge([turbopipes.ataskify(source(), label='a')])
+        async with contextlib.aclosing(stream):
+            async for task in stream:
+                await task
+                consuming.set()
+                # Park the consumer with the source idle at its `yield` and no pull in
+                # flight, so the cancellation tears down via `aclose()` rather than via
+                # a cancelled pull - the two routes differ, and only this one raises.
+                await asyncio.Event().wait()
+
+    consume_task = asyncio.create_task(consume())
+    await consuming.wait()
+
+    consume_task.cancel()
+    with pytest.raises(MockError, match='cleanup a'):
+        await consume_task
+
+    # The consumer was cancelled, yet doesn't look it - the source's failure took the
+    # place of the `CancelledError`, which is exactly why a `TimeoutError` can go
+    # missing around a merge.
+    assert not consume_task.cancelled()
+
+
 async def test_amerge__accepts_any_iterable_of_generators():
     # Taking an `Iterable` rather than a `Sequence` means a generator expression works,
     # which is the shape the composition in `aselect` naturally produces.

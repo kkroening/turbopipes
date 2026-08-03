@@ -106,15 +106,18 @@ The teardown is the part worth knowing about. When you walk away early, sources 
 suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
 closed—`aclose()` raises `RuntimeError: aclose(): asynchronous generator is already running`, right
 out of the cleanup path, masking whatever cancellation was in progress and leaving every one of
-those sources unclosed. So `aselect` cancels every in-flight pull and waits for it to land _before_
-closing any source. This is the one corner of the library where `aclosing` alone wouldn't have been
-enough: `aselect` takes ownership of the sources you hand it, and closes every one of them for you.
+those sources unclosed. So every in-flight pull is cancelled and waited for _before_ any source is
+closed—by the `amerge` and `ataskify` layers underneath `aselect` (see _The Pieces Underneath_,
+below), each of which settles the pulls it armed itself. This is the one corner of the library where
+`aclosing` alone wouldn't have been enough: `aselect` takes ownership of the sources you hand it, and
+closes every one of them for you.
 
 That ownership begins when the merge does, which is worth knowing and is a property of async
-generators rather than of `aselect` in particular. `aselect` is itself an async generator, so none of
-its body runs—including the part that arranges those closes—until you first advance it. A merge that
-gets closed without ever having been advanced (an early `return` before the `async for`, say) leaves
-its sources untouched, and they're still yours to close at that point.
+generators rather than of `aselect` in particular. `aselect` hands you back an `amerge` generator,
+and an async generator runs none of its body—including the part that arranges those closes—until you
+first advance it. A merge that gets closed without ever having been advanced (an early `return`
+before the `async for`, say) leaves its sources untouched, and they're still yours to close at that
+point.
 
 One more consequence of that ownership, worth knowing before you run a merge inside a `TaskGroup` or
 under a timeout: a source's _own_ cleanup failure surfaces differently depending on how that source
@@ -167,9 +170,12 @@ keys from somewhere other than a mapping.
 Two more exports, both extracted from the teardown described above, because getting it right in one
 place and importing it beats getting it right in four:
 
-- **`aclosing_all(gens)`** is bulk `contextlib.aclosing`. Every generator gets closed even if closing
-  an earlier one raises—which a nested stack of `aclosing` blocks won't do for you, since the first
-  failure there skips all the rest.
+- **`aclosing_all(gens)`** is bulk `contextlib.aclosing`, and what it buys you is _dynamic arity_.
+  Nesting `aclosing` blocks means writing one `async with` per generator, which you can't do over a
+  sequence whose length you only learn at runtime—so you reach for `AsyncExitStack`, and this is that
+  packaged. Every generator gets closed even if closing an earlier one raises, but so does a nested
+  stack; the construction that _doesn't_ is the obvious `for gen in gens: await gen.aclose()`, where
+  the first failure abandons the rest.
 - **`asettle(tasks)`** cancels in-flight pulls and waits for them to land, which is the step that
   makes a mid-`__anext__()` generator closeable at all.
 
