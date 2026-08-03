@@ -8,7 +8,7 @@ re-arming after the yield, as `aselect` does, and once re-arming before it.
 Neither lets a source run away, because that guarantee doesn't come from this
 line: the merge is an async generator holding at most one pull per source, so
 between yields it isn't running, and while it isn't running it isn't arming
-anything.  What moving the line changes is how *tight* the bound is — one
+anything.  What moving the line changes is what this program reports — one
 produced-but-unconsumed item across the merge rather than two.  The count is
 merge-wide, since `produced` below is one counter shared by both sources;
 counted per source neither position exceeds one item.  The merge-wide
