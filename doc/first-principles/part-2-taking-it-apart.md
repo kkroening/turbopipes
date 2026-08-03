@@ -551,8 +551,7 @@ frame at three passes, which is the monolith's own cycle, and an interleaving ca
 caller who had no stream before.
 
 That is a trade rather than a free win, and the case for taking it has to be made on those terms
-rather than as a net. The costs land on the caller who was already there; the buys land on callers
-who weren't; and the caller who is unambiguously better off is the one merging a plain sequence,
+rather than as a net. The caller who is unambiguously better off is the one merging a plain sequence,
 which is the case the decomposition was for. The pieces are wanted often enough — merges without
 keys, failure policies the merge shouldn't be choosing — to be worth a constant factor on the sugar
 that composes them.
