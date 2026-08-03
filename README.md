@@ -74,6 +74,63 @@ async def main():
                 print(f'A specific task failed, but the pipeline survives: {exc}')
 ```
 
+## 🔀 Merging Several Sources: `aselect`
+
+Sometimes the problem isn't fanning one stream _out_ across workers, but fanning several streams
+_in_. `aselect` merges a mapping of async generators into a single stream, handing you each item as
+soon as whichever source produced it, tagged with that source's key so you know who spoke.
+
+```python
+import contextlib
+import turbopipes
+
+async def main():
+    sources = {'clicks': read_clicks(), 'ticks': read_ticks()}
+    stream = turbopipes.aselect(sources)
+
+    async with contextlib.aclosing(stream):
+        async for key, task in stream:
+            try:
+                print(f'{key}: {await task}')
+            except Exception as exc:
+                print(f'{key} failed, but the other sources keep going: {exc}')
+```
+
+Same bargain as `aparallel`: you get an awaitable rather than a bare item, so a single misbehaving
+source can't tear the merge down behind your back. Backpressure is maintained per source—at most one
+pull is in flight for each of them, and none is re-armed until your loop comes back for another
+item—so a chatty source can't run away from a slow consumer. A source that runs dry drops out
+quietly; the merge itself ends when the last one does.
+
+The teardown is the part worth knowing about. When you walk away early, sources can be left
+suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
+closed—`aclose()` raises `RuntimeError: aclose(): asynchronous generator is already running`, right
+out of the cleanup path, masking whatever cancellation was in progress and leaving every one of
+those sources unclosed. So `aselect` cancels every in-flight pull and waits for it to land _before_
+closing any source. This is the one corner of the library where `aclosing` alone wouldn't have been
+enough: `aselect` takes ownership of the sources you hand it, and closes every one of them for you.
+
+That ownership begins when the merge does, which is worth knowing and is a property of async
+generators rather than of `aselect` in particular. `aselect` is itself an async generator, so none of
+its body runs—including the part that arranges those closes—until you first advance it. A merge that
+gets closed without ever having been advanced (an early `return` before the `async for`, say) leaves
+its sources untouched, and they're still yours to close at that point.
+
+One more consequence of that ownership, worth knowing before you run a merge inside a `TaskGroup` or
+under a timeout: a source's _own_ cleanup failure surfaces differently depending on how that source
+was torn down—and doesn't always surface at all. A source that gets closed propagates it out to
+whoever closed the merge, which is what you want when you closed the merge deliberately—but it also
+means that a merge being _cancelled_ surfaces that failure in place of the `CancelledError`, so a
+cancelled consumer can look like it raised, and a `TimeoutError` can go missing. Only one such
+failure can propagate, though: every source still gets closed, but only the last failure raised
+survives, so if several sources fail their own cleanup the rest are dropped rather than chained onto
+it. A source that unwinds on its cancelled pull instead has nobody left to raise to, so its failure
+goes to the event loop's exception handler—logged, not propagated. That route is where the "doesn't
+always surface" above comes from: if what the source raised is itself a `CancelledError`, its pull
+looks exactly like one whose source simply propagated the cancellation it was sent, so nothing is
+reported at all—and a `finally` that merely awaits something already cancelled is enough to land
+there.
+
 ## FAQ
 
 ### Why is the interface designed this way?
