@@ -70,8 +70,9 @@ three rungs:
 - **The cost has to be nameable.** Layers are not free in an event loop, and a decomposition that
   won't say what it costs is asking to be believed rather than checked.
 
-§§7–9 take the first rung one piece at a time. [§10](#10-putting-it-back-together-and-the-bill)
-takes the other two.
+§§7–9 take the first rung one piece at a time — and two of the three clear it. `atag` does not, which
+is a result rather than an omission, and [§9](#9-atag-three-lines-and-one-decision) says so on its own
+account. [§10](#10-putting-it-back-together-and-the-bill) takes the other two rungs.
 
 The fourth job — teardown — is the awkward one, and it is deliberately left until
 [§11](#11-the-cleanup-extracted-asettle-and-aclosing_all). It was [Part
@@ -137,9 +138,15 @@ property of the merge.
 
 ### 7.2 The tie-break the obvious merge doesn't have
 
-There is a defect in §6's loop — the document's sketch, not the library's code — inherited straight
-from §5, and it stays invisible right up until merging becomes its own function with its own
-ordering contract to state.
+There is a defect in §6's loop, and it is the document's sketch rather than the library's code. The
+distinction matters more here than anywhere else in this part, so it is worth being blunt about:
+this section **re-derives a property the shipped code already had**. The `aselect` that was
+decomposed — the commit immediately before the decomposition — already filtered `pulls` by `done`,
+carried a seven-line comment explaining why, and stated the delivery order in its own docstring. The
+block below says so too: its middle row is that merge, and it scores exactly what `amerge` scores.
+
+What was missing was not the behaviour. It was the *argument* — the comparison against the merge
+anyone writes first, and the number that separates them.
 
 `asyncio.wait` returns its completed tasks as a **`set`**. Iterating a set is iterating in hash
 order, which for `Task` objects means address order — arbitrary, and different on every run. So
@@ -181,8 +188,14 @@ can write a test against and one you can only write a test around.
 Neither property is exotic, and neither is free: they cost one list comprehension. The reason both
 are missing from §5's *sketch* is that the derivation there was chasing teardown, and a merge
 presented as one step inside a keyed selector never has to answer the question *"what order do you
-deliver in?"* on its own account. Giving the merge a name is what forces the answer to be written
-down — and once it is written down it can be measured, which is the row above.
+deliver in?"* on its own account.
+
+Giving the merge a name did not force the answer to be written down — it was written down already,
+in a docstring, by a function that had no separate merge in it. What a name forces is the answer into
+the **derivation**: a contract stated on a keyed selector is a promise a reader takes on trust,
+whereas a merge with its own section has to be set beside the merge anyone writes first and measured
+against it. That is the row above, and it is what this section adds. The behaviour was never the new
+part.
 
 ---
 
@@ -320,7 +333,16 @@ That is the entire function. It has no failure semantics, no tasks, no schedulin
 nothing to derive about what it does. Identity, added additively — which is the point, because it
 means the merge underneath never learns about keys and the keyless caller never pays for them.
 
-What it does have is a **position in the stack**, and the two available positions are not
+**And it fails §6's first rung, which is worth conceding rather than arguing around.** §7.1 showed a
+merge that is the right surface on its own, and §8 claimed the rung for `ataskify` and then admitted
+how little it buys over a single source. `atag` has no such claim to make. Used alone it turns a
+stream into pairs with a constant first element, which anyone can write inline in less space than the
+import — and a reader who suspects the decomposition of manufacturing exports is right to look here
+first, because this is the shortest one.
+
+What earns it a name is the other two rungs. It is the only way to keep keys out of `amerge` while
+keeping them readable *before* the `await` — a claim about composition, not about solitude. So the
+rest of this section is about its **position in the stack**, and the two available positions are not
 equivalent:
 
 ```
@@ -495,13 +517,35 @@ asserted.
 
 | What it buys | What it costs |
 | --- | --- |
-| Three pieces each usable alone, with a merge that works over a plain sequence (§7) | Six event-loop passes per delivered item against three (§10.2) |
+| A merge over a plain sequence, with its ordering contract, reachable without keys (§7, §7.2) | Six event-loop passes per delivered item against three (§10.2) |
 | Failure policy chosen at the call site rather than fixed by the merge (§7.1) | Three generator frames per source: deeper tracebacks, more objects |
 | Identity added additively, so a keyless caller pays nothing for keys (§9) | Cross-source interleaving moved, within unchanged guarantees (§10.3) |
-| A stated, testable ordering contract for the merge itself (§7.2) | One name that has to be handed down out of band (§11.4) |
+| | One name that has to be handed down out of band (§11.4) |
 
-That is a trade rather than a free win, and it is the shape of trade worth taking: the costs are
-constant-factor and measurable, and the benefits are structural.
+The columns are uneven because the ledger is. The ordering contract is not a fourth purchase: the
+shipped `aselect` already had it, so what the decomposition added there is reach, not behaviour —
+which is why it sits in row one rather than on a line of its own.
+
+**The two columns are also paid by different people, and that is the part a table hides.** Every buy
+needs a caller who reaches past `aselect`: you only get pieces usable alone by calling them, only
+choose the failure policy by composing by hand or merging bare, and only avoid paying for keys by
+not asking for them. Meanwhile the first three costs are measured *through `aselect` itself* —
+[`10_2_loop_passes.py`](./10_2_loop_passes.py) and
+[`10_3_interleaving.py`](./10_3_interleaving.py) both drain `turbopipes.aselect` — so they land on
+every caller of it, including one who never reads this part. The columns meet on exactly one row, the
+`label` handed down out of band, and that is a cost, borne by the hand-composer.
+
+So: a caller who keeps calling `aselect` and changes nothing gets a behaviourally identical stream
+(§10.1 measures that) at half the rate, through three frames, in a different interleaving, and
+collects nothing from the left column. A caller who reaches past it collects three and pays one.
+[§10.2](#102-the-bill-part-one-scheduling) prices the choice §10.1 offers, but that is not an escape
+for the first caller: dropping `ataskify` changes the failure policy, which makes it a different
+product rather than the same one cheaper.
+
+That is a trade rather than a free win, and the case for taking it has to be made on those terms
+rather than as a net. The pieces are wanted often enough — merges without keys, failure policies the
+merge shouldn't be choosing — to be worth a constant factor on the sugar that composes them. What is
+not true is that any single caller comes out ahead on both columns.
 
 ---
 
