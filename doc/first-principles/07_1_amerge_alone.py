@@ -6,7 +6,7 @@ means it inherits the one an `async for` over a single generator already has:
 the exception ends the iteration.  For a merge that means it ends *every*
 source's iteration, however innocent they were.
 
-Three sources, one of which raises on its third pull.  The same scenario is run
+Three sources, one of which raises on its second pull.  The same scenario is run
 twice: straight through `amerge`, and with each source wrapped in `ataskify`
 first — which is `aselect`'s arrangement, minus the keys.
 

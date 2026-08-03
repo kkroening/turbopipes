@@ -56,7 +56,7 @@ directory.
 | 7.1 | a failing source through `amerge` alone, and behind `ataskify` | [`07_1_amerge_alone.py`](07_1_amerge_alone.py) |
 | 7.2 | service gap and reproducibility: `set` order vs. least-recently-served | [`07_2_round_robin.py`](07_2_round_robin.py) |
 | 8.1 | awaiting the pull vs. waiting on it | [`08_1_wait_not_await.py`](08_1_wait_not_await.py) |
-| 8.2 | head-of-line blocking from yielding a pull before it completes | [`08_2_head_of_line.py`](08_2_head_of_line.py) |
+| 8.2 | head-of-line blocking from yielding a pull before it completes, and the backpressure that survives it | [`08_2_head_of_line.py`](08_2_head_of_line.py) |
 | 9 | `atag` outside vs. inside `ataskify`, in the failure case | [`09_tag_placement.py`](09_tag_placement.py) |
 | 10.1 | the hand-written composition against `aselect` | [`10_1_reassembly.py`](10_1_reassembly.py) |
 | 10.2 | event-loop passes per delivered item: monolith vs. composition | [`10_2_loop_passes.py`](10_2_loop_passes.py) |
@@ -72,27 +72,36 @@ ones above to the layers that produce them.
 
 ## What is and isn't stable
 
-The parts quote these outputs on **CPython 3.14.6**. Most of them are exact: where a measurement
-could be driven by a stopwatch or by counting event-loop passes, these scripts count event-loop
-passes, so the number is a property of the design rather than of the machine it ran on.
+The parts quote these outputs on **CPython 3.14.6**. Thirty of the thirty-one are exact: where a
+measurement could be driven by a stopwatch or by counting event-loop passes, these scripts count
+event-loop passes, so the number is a property of the design rather than of the machine it ran on.
 
-Three exceptions, all labelled as such on the page:
+Two different things can make a script's output move, and only one of them is about reproducing it
+today. Both are labelled on the page.
+
+**One moves between runs:**
 
 -   [`02_chunk_barrier.py`](02_chunk_barrier.py) is a wall-clock benchmark. Its timings are
     dominated by `asyncio.sleep`, so they reproduce closely, but the mean-occupancy figures are
     sampled and their last digit moves between runs.
--   [`04_3_early_exit_today.py`](04_3_early_exit_today.py) measures a defect rather than a design,
-    and is expected to change when the defect is fixed. See the footnote in
+
+**Two will move when the library does.** Both are byte-for-byte reproducible on demand; what they
+are pinned to is a defect, so it is fixing the defect — not re-running the script — that changes
+them:
+
+-   [`04_3_early_exit_today.py`](04_3_early_exit_today.py) measures the `aparallel` teardown defect
+    rather than a design, and is expected to change when that defect is fixed. See the footnote in
     [Part I](./part-1-the-derivation.md).
 -   [`11_5_report_gap_today.py`](11_5_report_gap_today.py) likewise, for a different defect — a
     cleanup-failure report dropped when a second cancellation lands inside `asettle`'s own gather.
     See the footnote in [Part II](./part-2-taking-it-apart.md).
 
-Two of these scripts — [`04_1_source_io.py`](04_1_source_io.py) and
+Two further scripts — [`04_1_source_io.py`](04_1_source_io.py) and
 [`04_1_bounded_source.py`](04_1_bounded_source.py) — leave an `aparallel` loop early, and so trip
-over that first defect on the way out. Each swallows exactly the `BaseExceptionGroup` of
-`GeneratorExit` it produces, re-raising anything else, and says so where it does it. The
-measurements themselves are unaffected: the cleanup runs correctly, it just also raises.
+over that same `aparallel` teardown defect on the way out. Each swallows exactly the
+`BaseExceptionGroup` of `GeneratorExit` it produces, re-raising anything else, and says so where it
+does it. The measurements themselves are unaffected: the cleanup runs correctly, it just also
+raises.
 
 One more is worth a note even though it does reproduce.
 [`07_2_round_robin.py`](07_2_round_robin.py) reports, among other things, what an *arbitrary* order
@@ -110,9 +119,9 @@ these scripts, and nothing compares what they print against what the parts quote
 correspondence described at the top of this file is hand-checked: a number on the page carries a
 guarantee that somebody ran the script, not one that anything will notice when it stops matching.
 
-Making it an enforced guarantee would be worth doing — twenty-eight of the thirty-one scripts are
+Making it an enforced guarantee would be worth doing — thirty of the thirty-one scripts are
 deterministic, so a check that ran each one and asserted its output appears verbatim in the part it
-belongs to would be a real assertion rather than a smoke test.
+belongs to would be a real assertion rather than a smoke test for all but one of them.
 
 Comparing stdout alone would not be enough, though, and it comes up short in two opposite
 directions — both of which involve the `aparallel` teardown defect, and only one of which is

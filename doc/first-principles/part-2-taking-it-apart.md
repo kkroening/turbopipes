@@ -112,7 +112,7 @@ failed"*. It doesn't try. What it does instead is inherit the failure behaviour 
 a single generator already has: the exception ends the iteration.
 
 For a merge, that has a consequence worth stating out loud — it ends *every* source's iteration,
-including the ones that did nothing wrong. Three sources, one of which raises on its third pull:
+including the ones that did nothing wrong. Three sources, one of which raises on its second pull:
 
 ```
 amerge(sources)               items: good10 bad0 good20 good11
@@ -162,10 +162,10 @@ Two properties, and the cheap-looking one is the one that bites.
 
 The **service gap** is how long a source can go unserved while its peers are served, counted in
 items. Round-robin's is exactly the source count, by construction. Arbitrary order's worst case is
-`2n - 1` — served last in one pass and first in the next, or the reverse — and twenty trials find it
-every time. A source cannot be starved outright either way, since `wait` reports everything that
-completed; what it can be is served at half the rate of a peer sitting a few slots away in the same
-`set`, for no reason the caller can see.
+`2n - 1` — served first in one pass and last in the next — and twenty trials find it every time. A
+source cannot be starved outright either way, since `wait` reports everything that completed; what
+it can be is served at half the rate of a peer sitting a few slots away in the same `set`, for no
+reason the caller can see.
 
 The one that bites is **reproducibility**: same sources, same interleaving, every run. Arbitrary
 order gave a different answer in essentially every trial. That is the difference between a merge you
@@ -259,17 +259,21 @@ order, and the waiting moves to the consumer's own `await` — one item at a tim
 handed them.
 
 Two sources, one instant and one taking ten event-loop passes per item, merged both ways. `item@N`
-reads "delivered to the consumer N event-loop passes in":
+reads "delivered to the consumer N event-loop passes in". The second block is the same two variants
+against a different arrangement, and belongs to the backpressure paragraph below:
 
 ```
 ataskify, waiting    fast0@6 fast1@12 slow0@16 fast2@18 fast3@24 slow1@30 slow2@46 slow3@62
 yielding unawaited   slow0@13 fast0@13 slow1@26 fast1@26 slow2@39 fast2@39 slow3@52 fast3@52
+backpressure — sources that never await, consumer dawdling 20 passes per item:
+  ataskify, waiting    produced-but-unconsumed after each consume: 1 1 1 1
+  yielding unawaited   produced-but-unconsumed after each consume: 1 1 1 1
 ```
 
-The top row is a merge: the fast source delivers at its own rate and the slow source's items appear
-among them as they become available. The bottom row is a queue. Everything is in lockstep at the
-slow source's pace, and `fast0` — ready almost immediately — is not delivered until pass 13, because
-it was handed to the consumer behind a `slow` task the consumer had to await first.
+The first row is a merge: the fast source delivers at its own rate and the slow source's items
+appear among them as they become available. The second row is a queue. Everything is in lockstep at
+the slow source's pace, and `fast0` — ready almost immediately — is not delivered until pass 13,
+because it was handed to the consumer behind a `slow` task the consumer had to await first.
 
 That is head-of-line blocking, reintroduced one layer above where
 [§2](./part-1-the-derivation.md#2-attempt-one-asynciogather-in-chunks) removed it. The chunk barrier
@@ -278,7 +282,14 @@ came back wearing a different hat.
 Worth being precise about what *doesn't* break, since it is tempting to add it to the charge sheet:
 backpressure survives the eager variant intact. Each source still has at most one pull in flight and
 nothing new is armed while the consumer is away, so the produced-but-unconsumed gap stays at 1 in
-both arrangements. What is lost is readiness ordering, and that is enough.
+both arrangements — the last two rows above, measured the way
+[§5.5](./part-1-the-derivation.md#55-backpressure-survives-the-merge) measures it. What is lost is
+readiness ordering, and that is enough.
+
+This is the one place where the guide contradicts the library's own prose rather than merely
+supplementing it: `_ataskify.py`'s docstring says that yielding an unawaited pull would lose "both
+readiness ordering and backpressure", and the second half of that is overstated — which is why the
+gap is measured here instead of being asserted. The docstring is being corrected separately.
 
 So `ataskify` has to be suspended at an `await` inside its own body between arming a pull and
 handing it over. That is an unremarkable state for a generator to be in and a consequential one to

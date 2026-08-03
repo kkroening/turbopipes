@@ -15,6 +15,17 @@ head-of-line blocking, reintroduced one layer up from where §2 removed it.
 
 Two sources — one instant, one taking ten event-loop passes per item — merged
 both ways.  `item@N` reads "delivered to the consumer N event-loop passes in".
+
+What is *not* lost is backpressure, which is worth measuring rather than
+asserting, since it is the half of `_ataskify.py`'s docstring claim that doesn't
+hold.  The second block re-runs both variants against §5.5's arrangement — two
+sources that never await, a consumer dawdling twenty passes per item — and
+reports the produced-but-unconsumed gap.  Both hold it at one item per source:
+the eager variant still arms at most one pull per source, and still re-arms only
+when the consumer resumes it.
+
+Sampling point matters and is easy to get wrong, per §5.5: `produced` is read
+after the consumer has finished dawdling, not at the instant of the consume.
 """
 
 import asyncio
@@ -30,6 +41,8 @@ import turbopipes  # noqa: E402  # pylint: disable=wrong-import-position
 
 SLOW_PASSES = 10
 ITEMS = 4
+DAWDLE_PASSES = 20
+CONSUME = 4
 
 Taskify = Callable[
     [AsyncGenerator[str, None]],
@@ -91,6 +104,19 @@ def make_sources() -> dict[str, AsyncGenerator[str, None]]:
     return {'slow': slow('slow'), 'fast': instant('fast')}
 
 
+def make_eager_sources(produced: list[int]) -> dict[str, AsyncGenerator[str, None]]:
+    """Sources that never await, so nothing but the pipeline bounds them."""
+
+    async def never_awaits(name: str) -> AsyncGenerator[str, None]:
+        index = 0
+        while True:
+            produced[0] += 1
+            yield f'{name}{index}'
+            index += 1
+
+    return {'a': never_awaits('a'), 'b': never_awaits('b')}
+
+
 async def run(label: str, taskify: Taskify) -> None:
     ticker = Ticker()
     ticker.start()
@@ -113,9 +139,40 @@ async def run(label: str, taskify: Taskify) -> None:
     print(f'{label}  {" ".join(delivered)}')
 
 
+async def run_backpressure(label: str, taskify: Taskify) -> None:
+    produced = [0]
+    sources = make_eager_sources(produced)
+    stream = turbopipes.amerge(
+        [turbopipes.atag(key, taskify(gen)) for key, gen in sources.items()],
+    )
+
+    gaps: list[int] = []
+    consumed = 0
+    async with contextlib.aclosing(stream):
+        async for _key, task in stream:
+            await task
+            consumed += 1
+            for _ in range(DAWDLE_PASSES):
+                await asyncio.sleep(0)
+            gaps.append(produced[0] - consumed)
+            if consumed == CONSUME:
+                break
+
+    print(
+        f'  {label}  produced-but-unconsumed after each consume: '
+        f'{" ".join(str(gap) for gap in gaps)}'
+    )
+
+
 async def main() -> None:
     await run('ataskify, waiting  ', turbopipes.ataskify)
     await run('yielding unawaited ', taskify_eager)
+    print(
+        'backpressure — sources that never await, '
+        f'consumer dawdling {DAWDLE_PASSES} passes per item:'
+    )
+    await run_backpressure('ataskify, waiting  ', turbopipes.ataskify)
+    await run_backpressure('yielding unawaited ', taskify_eager)
 
 
 asyncio.run(main())

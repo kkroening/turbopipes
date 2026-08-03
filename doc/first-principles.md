@@ -47,10 +47,11 @@ Every measurement block in the three parts is backed by one script in
 number on the page can therefore be re-checked rather than taken on trust, and stays checkable when
 CPython or the library moves.
 
-The figures quoted were produced on **CPython 3.14.6**. Twenty-eight of the thirty-one scripts are
-byte-for-byte reproducible on demand. The exceptions are one wall-clock benchmark, whose sampled
-figures move in the last digit, and two scripts that measure a *defect* rather than a design and are
-expected to change when those defects are fixed. All three are called out where they appear, and
+The figures quoted were produced on **CPython 3.14.6**. Thirty of the thirty-one scripts are
+byte-for-byte reproducible on demand; the exception is one wall-clock benchmark, whose sampled
+figures move in the last digit. Separately, two scripts measure a *defect* rather than a design, and
+are expected to change when those defects are fixed — which is a promise about the future rather
+than about reproducing today. All three are called out where they appear, and
 [`first-principles/README.md`](./first-principles/README.md) carries the full index and the
 stability notes.
 
