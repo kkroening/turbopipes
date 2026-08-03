@@ -104,17 +104,19 @@ def make_sources(count: int) -> dict[str, AsyncGenerator[str, None]]:
 
 
 async def consume(item: object) -> None:
-    """Awaits every task the arrangement delivered, so the consumer isn't a variable.
+    """Awaits every task the arrangement delivered, whatever shape it arrives in.
 
     The ladder's arrangements deliver different shapes - a bare value, a `(key,
     value)` pair, a task, a tagged task, and a tagged task nested inside another
     one - so the walk is exhaustive through both tuples and tasks rather than
-    stopping at the first value it can't unwrap.  That way no part of the passes
-    column can be the consumer doing more work in one arrangement than another.
+    stopping at the first value it can't unwrap.  Its own await count therefore
+    tracks how many tasks an arrangement delivers: none, ten or twenty across
+    the ladder.
 
-    Draining exhaustively costs nothing to measure, for the same reason the
-    section this backs is about: every task here has already completed by the
-    time it is yielded, and awaiting a completed task never reaches the loop.
+    That this costs nothing is measured rather than granted.  The monolith
+    delivers ten tasks and `amerge(src)` delivers none, and both cost three
+    passes - ten awaits of difference for zero passes of difference.  Awaiting a
+    task that has already completed never reaches the loop.
     """
     pending: list[object] = [item]
     while pending:
