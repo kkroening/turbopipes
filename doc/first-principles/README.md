@@ -159,7 +159,7 @@ spread beneath it was a sampled artefact of one batch of draws.
 
 So the rule the enforced check would need is a rule about what gets quoted in the first place:
 **prefer a quantity that is derivable from the design over one sampled from a run.** No script in
-this directory currently violates it, which is why there is no fourth bullet above and no third
+this directory currently violates it, which is why there is no third bullet above and no third
 heading in [What is and isn't stable](#what-is-and-isnt-stable) — the constraint belongs to whoever
 writes the next measurement, not to a list of present exceptions.
 

@@ -16,11 +16,11 @@ with three, the sources are all ready together, so a whole batch is delivered
 within one pass and the cost lands on the gap between batches.
 
 A ladder of arrangements then varies the two counts independently, so that the
-doubling can be attributed rather than assumed: three of them hold the waiting
-layers at one and take the frames from one to three, and three more add a
-second and a third waiting layer.  The last two stack `ataskify` on itself,
-which nobody would write; they are there so that the rule is checked somewhere
-other than the two points the doubling itself provides.
+doubling can be attributed rather than assumed: the first four hold the waiting
+layers at one and take the frames from one to three, and the last four add a
+second and a third waiting layer.  Of those, the final two stack `ataskify` on
+itself, which nobody would write; they are there so that the rule is checked
+somewhere other than the two points the doubling itself provides.
 
 The monolith here is §5's merge with §7.2's tie-break, which is what the
 library shipped before the decomposition.
@@ -104,16 +104,25 @@ def make_sources(count: int) -> dict[str, AsyncGenerator[str, None]]:
 
 
 async def consume(item: object) -> None:
-    """Awaits whatever the arrangement delivered, so the consumer's own await counts.
+    """Awaits every task the arrangement delivered, so the consumer isn't a variable.
 
     The ladder's arrangements deliver different shapes - a bare value, a `(key,
-    value)` pair, a task, a tagged task - and the delivered task is awaited
-    wherever there is one, so that no part of the delta can be the consumer
-    doing more work in one arrangement than in another.
+    value)` pair, a task, a tagged task, and a tagged task nested inside another
+    one - so the walk is exhaustive through both tuples and tasks rather than
+    stopping at the first value it can't unwrap.  That way no part of the passes
+    column can be the consumer doing more work in one arrangement than another.
+
+    Draining exhaustively costs nothing to measure, for the same reason the
+    section this backs is about: every task here has already completed by the
+    time it is yielded, and awaiting a completed task never reaches the loop.
     """
-    value = item[1] if isinstance(item, tuple) else item
-    while isinstance(value, asyncio.Task):
-        value = await value
+    pending: list[object] = [item]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, asyncio.Task):
+            pending.append(await value)
+        elif isinstance(value, tuple):
+            pending.extend(value)
 
 
 async def gaps(merge: Merge, sources: int) -> list[int]:
