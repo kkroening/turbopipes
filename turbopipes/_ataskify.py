@@ -58,9 +58,9 @@ async def ataskify(
         wait behind whichever one merely happened to sit ahead of it.  Backpressure
         survives that change - it comes from the ``yield`` rather than the wait, since
         at most one pull is armed per source either way, and none is re-armed until the
-        consumer comes back.  A generator in that state has ``ag_running`` set and
-        cannot be closed, so the in-flight pull is cancelled and awaited before ``gen``
-        is closed; see :func:`asettle`.
+        consumer comes back.  A generator suspended at an ``await`` inside its own body
+        has ``ag_running`` set and cannot be closed, so the in-flight pull is cancelled
+        and awaited before ``gen`` is closed; see :func:`asettle`.
 
         A caller can tear this generator down two ways, and they differ.  Cancelling
         the task that is awaiting this generator's ``__anext__()`` gets ``gen``'s
