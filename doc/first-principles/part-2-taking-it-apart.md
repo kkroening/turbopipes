@@ -150,10 +150,11 @@ to anything the caller can see or predict.
 in arming order, and a source isn't re-armed until it has been served, so serving one sends it to
 the back of the dictionary. That makes the tie-break **least-recently-served first**.
 
-Eight sources that are ready on every pass, sixty-four items taken, twenty trials each:
+Eight sources that are ready on every pass, sixty-four items taken, twenty trials each — the gap
+reported being the worst any trial reached:
 
 ```
-iterate `done`, a set   worst service gap: 14-15 | all 20 trials identical: no
+iterate `done`, a set   worst service gap: 15    | all 20 trials identical: no
 filter `pulls` by it    worst service gap: 8     | all 20 trials identical: yes
 turbopipes.amerge       worst service gap: 8     | all 20 trials identical: yes
 ```
@@ -166,6 +167,12 @@ items. Round-robin's is exactly the source count, by construction. Arbitrary ord
 source cannot be starved outright either way, since `wait` reports everything that completed; what
 it can be is served at half the rate of a peer sitting a few slots away in the same `set`, for no
 reason the caller can see.
+
+Only the ceiling is quoted, and deliberately. An individual trial can come in under `2n - 1`, and
+whether it does is a property of the twenty draws rather than of the merge — so the spread beneath
+the ceiling is a sampled quantity, and quoting it would put a number on the page that another machine
+would contradict while nothing about the design had changed. `2n - 1` is reached at every source
+count.
 
 The one that bites is **reproducibility**: same sources, same interleaving, every run. Arbitrary
 order gave a different answer in essentially every trial. That is the difference between a merge you

@@ -105,10 +105,18 @@ raises.
 
 One more is worth a note even though it does reproduce.
 [`07_2_round_robin.py`](07_2_round_robin.py) reports, among other things, what an *arbitrary* order
-does — set iteration order over `Task` objects, which is address order and differs on every run. Its
-two summary figures for that row are stable because they are aggregates over twenty trials rather
-than properties of one, and twenty trials reliably find the worst case; the underlying orders they
-summarise are different every time, which is exactly the point that row is making.
+does — set iteration order over `Task` objects, which is address order and differs on every run. The
+two figures it prints for that row survive that because neither is a property of a single trial: the
+service gap is the **worst** any of the twenty trials reached, which is `2n - 1` by construction and
+is reached at every source count, and the reproducibility column is a boolean over the same twenty.
+The underlying orders they summarise are different every time, which is exactly the point that row is
+making.
+
+What that row deliberately does **not** report is the spread of the twenty trials *beneath* that
+ceiling. An individual trial can come in under `2n - 1`, and whether it does is a property of the
+draws rather than of the merge — a sampled quantity wearing a measurement's clothes. See
+[Nothing runs these automatically](#nothing-runs-these-automatically) for why that distinction turned
+out to be worth more than it looks.
 
 ## Nothing runs these automatically
 
@@ -138,6 +146,22 @@ visible from the output:
     **expected-to-change** marker, not a tighter assertion — and
     [`11_5_report_gap_today.py`](11_5_report_gap_today.py) wants the same marker, for the same
     reason.
+
+There is a third way it can mislead, and unlike those two it is a property of the *page* rather than
+of a script. A quantity can be perfectly reproducible in the environment that produced it and differ
+in another, without anything about the design or the library having changed — in which case the check
+passes forever on the machine that generated the expectation and fails on arrival everywhere else,
+which is the failure mode an automated check is least able to help with. That is not hypothetical
+here: §7.2's service gap was quoted for a while as a `min`–`max` span over twenty trials, and the
+`min` end of it has since been observed at three different values on the same pinned CPython while
+the `max` never moved. The ceiling is structural — `2n - 1`, reached at every source count — and the
+spread beneath it was a sampled artefact of one batch of draws.
+
+So the rule the enforced check would need is a rule about what gets quoted in the first place:
+**prefer a quantity that is derivable from the design over one sampled from a run.** No script in
+this directory currently violates it, which is why there is no fourth bullet above and no third
+heading in [What is and isn't stable](#what-is-and-isnt-stable) — the constraint belongs to whoever
+writes the next measurement, not to a list of present exceptions.
 
 Whether such a check belongs in this repository's `tests/`, or somewhere of its own, is a
 question about what that suite is for rather than one this directory should answer on its own, and

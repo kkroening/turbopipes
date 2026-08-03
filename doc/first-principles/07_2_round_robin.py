@@ -20,6 +20,12 @@ history, which makes it the wrong thing to quote.
 Round-robin's worst gap is `n` by construction.  Arbitrary order's worst case is
 `2n - 1` — served first in one pass, last in the next — and twenty trials find
 it every time.
+
+What is reported is the worst gap across the twenty trials, and only that.  An
+individual trial can come in under `2n - 1`, and whether it does is a property of
+the twenty draws rather than of the merge, so the spread beneath the ceiling is
+a sampled quantity and is deliberately not reported.  The ceiling is the claim,
+and it holds at every source count.
 """
 
 import asyncio
@@ -111,11 +117,10 @@ def worst_service_gap(items: list[str]) -> int:
 
 async def run(label: str, merge: Merge) -> None:
     trials = [await collect(merge) for _ in range(TRIALS)]
-    gaps = {worst_service_gap(items) for items in trials}
-    span = f'{min(gaps)}' if len(gaps) == 1 else f'{min(gaps)}-{max(gaps)}'
+    worst = max(worst_service_gap(items) for items in trials)
     identical = 'yes' if len({tuple(items) for items in trials}) == 1 else 'no'
     print(
-        f'{label}  worst service gap: {span:<5} '
+        f'{label}  worst service gap: {worst:<5} '
         f'| all {TRIALS} trials identical: {identical}'
     )
 
