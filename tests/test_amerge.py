@@ -242,6 +242,7 @@ async def test_amerge__cancelled_consumer_surfaces_a_source_cleanup_failure():
         pass
 
     consuming = asyncio.Event()
+    keys = []
 
     async def source():
         try:
@@ -256,7 +257,11 @@ async def test_amerge__cancelled_consumer_surfaces_a_source_cleanup_failure():
         )
         async with contextlib.aclosing(stream):
             async for key, task in stream:
-                assert key == 'a'  # the tag survives the chain it rode up
+                # Recorded rather than asserted here: this runs above the
+                # `consuming.set()` that the main coroutine is parked on, so an
+                # `AssertionError` at this point would leave that `wait()` hanging
+                # forever and the run would report nothing at all.
+                keys.append(key)
                 await task
                 consuming.set()
                 # Park the consumer with the source idle at its `yield` and no pull in
@@ -275,6 +280,7 @@ async def test_amerge__cancelled_consumer_surfaces_a_source_cleanup_failure():
     # place of the `CancelledError`, which is exactly why a `TimeoutError` can go
     # missing around a merge.
     assert not consume_task.cancelled()
+    assert keys == ['a']  # the tag survives the chain it rode up
 
 
 async def test_amerge__accepts_any_iterable_of_generators():
