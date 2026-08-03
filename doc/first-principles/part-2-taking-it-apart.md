@@ -289,7 +289,7 @@ readiness ordering, and that is enough.
 This is the one place where the guide contradicts the library's own prose rather than merely
 supplementing it: `_ataskify.py`'s docstring says that yielding an unawaited pull would lose "both
 readiness ordering and backpressure", and the second half of that is overstated — which is why the
-gap is measured here instead of being asserted. The docstring is being corrected separately.
+gap is measured here instead of being asserted.[^ataskify-docstring]
 
 So `ataskify` has to be suspended at an `await` inside its own body between arming a pull and
 handing it over. That is an unremarkable state for a generator to be in and a consequential one to
@@ -705,6 +705,16 @@ nothing else to credit. That is
 [Part I](./part-1-the-derivation.md) **·** on to
 [Part III — the API in hindsight](./part-3-the-api-in-hindsight.md) **·** the scripts behind every
 measurement above are in [this directory](./README.md).
+
+[^ataskify-docstring]: A divergence pinned to the library as it stands today, not a permanent
+    disagreement. The docstring is being corrected separately; when that correction lands, **this
+    paragraph is what goes stale** — it will describe an overstatement `_ataskify.py` no longer
+    makes — and so does the same premise in
+    [`08_2_head_of_line.py`](./08_2_head_of_line.py)'s module docstring. The measurement itself is
+    unaffected either way: backpressure surviving the eager variant is a property of the
+    arrangement, not of what the docstring says about it. No PR is cited deliberately — none had
+    been read when this was written, and a wrong cross-reference would outlast the thing it points
+    at.
 
 [^asettle-report]: A known defect in `asettle`'s reporting, not a property of the design §11.4
     derives. When a second cancellation lands inside the teardown's own `gather`, the gather raises

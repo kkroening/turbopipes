@@ -12,7 +12,10 @@ serving one sends it to the back: least-recently-served first.
 
 Eight sources that are ready every pass, sixty-four items taken, twenty trials
 each.  Two things are measured: the worst gap between consecutive services of
-any one source, and how many distinct interleavings the twenty trials produced.
+any one source, and whether the twenty trials all produced the same
+interleaving.  Not how many distinct ones they produced — that count is set
+order over `Task` objects, so it is address order and moves with allocation
+history, which makes it the wrong thing to quote.
 
 Round-robin's worst gap is `n` by construction.  Arbitrary order's worst case is
 `2n - 1` — served first in one pass, last in the next — and twenty trials find
