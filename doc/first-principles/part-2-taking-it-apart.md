@@ -367,7 +367,10 @@ def aselect(gens):
 
 One expression, and `aselect`'s entire body. The order is §9's rule and §8's: `ataskify` innermost
 so failures become tasks, `atag` around it so the key rides beside the task, `amerge` outermost
-knowing nothing of either.
+knowing nothing of either. The `label` is the one term on that line §8 didn't introduce: it is
+diagnostics only, and saying what it diagnoses needs the teardown, so it is deliberately left until
+[§11.4](#114-the-seam-naming-a-failure-nobody-can-receive) — carry it if you hand-write this, and
+§11.4 is the argument for why.
 
 The claim being made is narrow and worth stating exactly, because the next two sections are about
 the ways the composition is *not* identical to §5's function. What is identical is `aselect` and the
@@ -390,12 +393,16 @@ none of it was ever `aselect`'s to decide.
 
 ### 10.2 The bill, part one: scheduling
 
-Three generator frames where there was one, and the cost is not a function call each. `amerge`
-pulling on `atag` is a suspension; `atag` pulling on `ataskify` is a suspension; `ataskify` pulling
-on the source is a suspension. Every one of those is a real event-loop round trip.
+Three generator frames where there was one — and the frames are not the cost. Crossing one is an
+`await` on a coroutine, and an `await` only reaches the event loop if something along it actually
+suspends. `atag` is an `async for` over its input: it arms nothing, waits on nothing, and passes the
+pull straight through. What costs a pass is a layer that hands its pull to a **task** and then waits
+on the task — and the composition has two of those where the monolith had one: `amerge` waiting on
+the pull it armed, and `ataskify` waiting on the pull *it* armed, nested inside the first.
 
 Sources that never await, so nothing but scheduling is being measured, and the event-loop passes
-between consecutive deliveries:
+between consecutive deliveries — the two merges first, then a ladder that varies the frame count and
+the waiting-layer count independently:
 
 ```
 1 source(s), 10 items delivered:
@@ -404,12 +411,39 @@ between consecutive deliveries:
 3 source(s), 30 items delivered:
   monolith    passes between deliveries: 0 0 3 0 0 3 0 0 3 ...
   composition passes between deliveries: 0 0 6 0 0 6 0 0 6 ...
+one source, frames and waiting layers varied independently:
+  arrangement                                  frames  waits  passes
+  monolith                                          1      1  3 3 3 3 3 ...
+  amerge(src)                                       1      1  3 3 3 3 3 ...
+  amerge(atag(src))                                 2      1  3 3 3 3 3 ...
+  amerge(atag(atag(src)))                           3      1  3 3 3 3 3 ...
+  amerge(ataskify(src))                             2      2  6 6 6 6 6 ...
+  amerge(atag(ataskify(src)))                       3      2  6 6 6 6 6 ...
+  amerge(ataskify(ataskify(src)))                   3      3  9 9 9 9 9 ...
+  amerge(atag(ataskify(atag(ataskify(src)))))       5      3  9 9 9 9 9 ...
 ```
 
-**Six passes per item against three.** Exactly double, with no variance: it is a structural property
-of the layering rather than a load-dependent one. With three sources the ratio is unchanged; the
-sources are ready together, so a batch of three is delivered within one pass and the doubling lands
-on the gap between batches.
+**Six passes per item against three.** Exactly double, with no variance — and the ladder says which
+structure that is a property of. Hold the waiting layers at one and take the frames from one to
+three: three passes throughout, unchanged. Adding `atag` costs nothing, and adding a *second* `atag`,
+so that the arrangement carries `aselect`'s own three frames, still costs nothing. The doubling
+appears exactly when the second waiting layer does, with or without `atag` above it.
+
+The last two rows are there because two points don't make a rule. A third waiting layer costs nine,
+so the relationship is three passes *per waiting layer* rather than a one-off doubling; and five
+frames at three waiting layers costs what three frames at three waiting layers costs, so the frames
+are not merely cheap, they are free at any count. Neither arrangement is one anybody would write —
+which is what makes them controls rather than examples.
+
+With three sources the ratio is unchanged; the sources are ready together, so a batch of three is
+delivered within one pass and the doubling lands on the gap between batches.
+
+**Which prices the choice [§10.1](#101-the-composition-is-the-function) has just offered.** Dropping
+`ataskify` — when a source failing genuinely should end everything — recovers the whole doubling.
+Dropping `atag` recovers nothing at all: it was free before and it is free after. There the two read
+as the same kind of trade; they are not, and the asymmetry is the same fact
+[§11.1](#111-every-layer-that-arms-a-pull-settles-its-own) turns into its load-bearing observation —
+`atag` has no pull to settle because it arms none.
 
 What that costs in practice depends entirely on what the sources are doing. Against real I/O — a
 socket, a database cursor, an HTTP round trip — three extra loop passes are lost in the noise of a

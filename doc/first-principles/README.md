@@ -59,7 +59,7 @@ directory.
 | 8.2 | head-of-line blocking from yielding a pull before it completes, and the backpressure that survives it | [`08_2_head_of_line.py`](08_2_head_of_line.py) |
 | 9 | `atag` outside vs. inside `ataskify`, in the failure case | [`09_tag_placement.py`](09_tag_placement.py) |
 | 10.1 | the hand-written composition against `aselect` | [`10_1_reassembly.py`](10_1_reassembly.py) |
-| 10.2 | event-loop passes per delivered item: monolith vs. composition | [`10_2_loop_passes.py`](10_2_loop_passes.py) |
+| 10.2 | event-loop passes per delivered item, and which layer pays them | [`10_2_loop_passes.py`](10_2_loop_passes.py) |
 | 10.3 | what moved in the cross-source interleaving, and what didn't | [`10_3_interleaving.py`](10_3_interleaving.py) |
 | 11.1 | removing each layer's settling, one at a time | [`11_1_who_settles.py`](11_1_who_settles.py) |
 | 11.2 | settling nested inside the closes vs. outside them | [`11_2_nesting.py`](11_2_nesting.py) |
