@@ -535,17 +535,27 @@ not asking for them. Meanwhile the first three costs are measured *through `asel
 every caller of it, including one who never reads this part. The columns meet on exactly one row, the
 `label` handed down out of band, and that is a cost, borne by the hand-composer.
 
-So: a caller who keeps calling `aselect` and changes nothing gets a behaviourally identical stream
-(§10.1 measures that) at half the rate, through three frames, in a different interleaving, and
-collects nothing from the left column. A caller who reaches past it collects three and pays one.
+So: a caller who keeps calling `aselect` and changes nothing gets the same items in the same
+per-source order, with nothing documented changed
+([§10.3](#103-the-bill-part-two-interleaving) measures that), at half the rate, through three frames,
+in a different interleaving, and collects nothing from the left column.
 [§10.2](#102-the-bill-part-one-scheduling) prices the choice §10.1 offers, but that is not an escape
-for the first caller: dropping `ataskify` changes the failure policy, which makes it a different
-product rather than the same one cheaper.
+for this caller: dropping `ataskify` changes the failure policy, which makes it a different product
+rather than the same one cheaper.
+
+The other side is not one population either. A caller who hand-composes to get attributable cleanup
+reports collects three buys and pays the `label` cost; a caller who merges a plain list — no keys, no
+tasks, just `amerge([gen_a, gen_b, gen_c])` — collects the same three and pays **nothing**. The
+ladder in [§10.2](#102-the-bill-part-one-scheduling) is where that is checkable: `amerge(src)` is one
+frame at three passes, which is the monolith's own cycle, and an interleaving cannot have moved for a
+caller who had no stream before.
 
 That is a trade rather than a free win, and the case for taking it has to be made on those terms
-rather than as a net. The pieces are wanted often enough — merges without keys, failure policies the
-merge shouldn't be choosing — to be worth a constant factor on the sugar that composes them. What is
-not true is that any single caller comes out ahead on both columns.
+rather than as a net. The costs land on the caller who was already there; the buys land on callers
+who weren't; and the caller who is unambiguously better off is the one merging a plain sequence,
+which is the case the decomposition was for. The pieces are wanted often enough — merges without
+keys, failure policies the merge shouldn't be choosing — to be worth a constant factor on the sugar
+that composes them.
 
 ---
 
@@ -775,8 +785,9 @@ those is a thing to build an alerting story on.
 
 ## Where this leaves off
 
-Six sections in, the merge is four functions and a rule about how to stack them, each piece is
-usable alone, the reassembly is checked rather than asserted, and the bill has been added up.
+Six sections in, the merge is four functions and a rule about how to stack them, two of the three are
+useful alone and the third earns its name on the other two rungs, the reassembly is checked rather
+than asserted, and the bill has been added up.
 
 What is left is to go back over the whole surface — `aparallel` included — and ask which layer is
 actually responsible for each of the properties the library advertises, several of which
