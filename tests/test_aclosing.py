@@ -143,6 +143,66 @@ async def test_asettle__reports_a_cleanup_failure_with_its_label():
     assert "'quiet'" in reported[0]['message']
 
 
+async def test_asettle__reports_a_cleanup_failure_despite_a_second_cancellation():
+    # The test above, in the shape the reporting actually has to survive: a consumer
+    # already unwinding from one `cancel()` is cancelled a second time, and that one
+    # lands while the settling's gather is open.  It cancels the *gather*, which then
+    # raises rather than returning, so a report made after the wait never happens at all
+    # - and the loop's exception handler is the only channel this failure has.
+    #
+    # The cleanup has to *survive* the second cancellation for this to pin the reporting:
+    # one that merely gets interrupted leaves no failure to report in the first place,
+    # which is a different effect and would pass here for the wrong reason.
+    class MockError(Exception):
+        pass
+
+    async def block():
+        try:
+            await asyncio.Event().wait()  # nothing ever sets it
+        finally:
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.sleep(0)  # outlive the second cancellation, then fail
+            raise MockError('Cleanup failed')
+
+    reported = []
+
+    def handle_exception(_loop, context):
+        reported.append(context)
+
+    task = asyncio.create_task(block())
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    async def consumer():
+        try:
+            await asyncio.Event().wait()  # nothing ever sets it
+        finally:
+            await turbopipes.asettle([task], label='quiet')
+
+    consuming = asyncio.create_task(consumer())
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(handle_exception)
+    try:
+        consuming.cancel()
+        for _ in range(2):
+            await asyncio.sleep(0)  # land the second cancel inside the gather
+        consuming.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await consuming
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert len(reported) == 1
+    assert isinstance(reported[0]['exception'], MockError)
+    assert "'quiet'" in reported[0]['message']
+    assert consuming.cancelled()  # reporting doesn't swallow the cancellation
+    assert task.done()
+
+
 async def test_asettle__does_not_report_a_plain_cancellation():
     async def block():
         await asyncio.Event().wait()  # nothing ever sets it
