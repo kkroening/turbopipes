@@ -95,6 +95,18 @@ async def asettle(
     failure that a consumer merely walked away from, and reporting that as a cleanup
     failure would be a false log line.
 
+    That reporting runs from a ``finally``, because the wait it follows can itself be cut
+    short.  A further ``cancel()`` arriving while the gather is open cancels the *gather*,
+    which then raises ``CancelledError`` once its children finish - regardless of
+    ``return_exceptions=True``, which only covers what the children raise, not what's
+    done to the gather (`gh-32684`_).  Leaving by that route would skip the reporting
+    entirely and drop the failure, and the loop's exception handler is the only channel
+    it has.  Reporting on the way out is safe for the same reason it's needed:
+    :func:`asyncio.gather` completes only once all of its children do, by every route
+    including that one, so a pull that's still running is never reached.
+
+    .. _gh-32684: https://github.com/python/cpython/issues/32684
+
     Note:
         ``label`` applies to the *call*, not to a task, so it's meaningful only when
         settling a single task.  Settling several in one call still reports every
@@ -110,10 +122,12 @@ async def asettle(
     cancelled = [task for task in tasks if not task.done()]
     for task in cancelled:
         task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-    for task in cancelled:
-        _report_cleanup_failure(label, task)
+    try:
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        for task in cancelled:
+            _report_cleanup_failure(label, task)
 
 
 @contextlib.asynccontextmanager
