@@ -621,12 +621,14 @@ re-arm BEFORE the yield:
 ```
 
 Neither column grows — set that against §3's ladder, where the gap passed a thousand by the fourth
-item. Moving the line takes the bound from two produced-but-unconsumed items per source down to
-one, which is worth having, and is a different thing from being what bounds it at all.
+item. Moving the line changes what this program reports: one produced-but-unconsumed item across
+the merge rather than two. That figure is merge-wide, because `produced` is a single counter shared
+by both sources; counted per source, neither position exceeds one item. The tightening is worth
+having, and is a different thing from being what bounds the gap at all.
 
-The bound of 1 is a property of the arrangement rather than of any one function, and it survives
-being rearranged: `aselect` today is three stacked generators rather than the single one derived
-here, and measures the same ladder. Which of them the re-arming line ends up in is
+The per-source bound of one is a property of the arrangement rather than of any one function, and it
+survives being rearranged: `aselect` today is three stacked generators rather than the single one
+derived here, and measures the same ladder. Which of them the re-arming line ends up in is
 [Part II](./part-2-taking-it-apart.md)'s business.
 
 (`produced` is read after the consumer has finished dawdling, by which point a pull armed during
