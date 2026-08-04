@@ -165,6 +165,11 @@ So reach past `aselect` whenever it doesn't fit: drop `atag` if your events alre
 drop `ataskify` if one source failing genuinely _should_ end everything, or keep both and get your
 keys from somewhere other than a mapping.
 
+Each of these three is derived, measured and costed in
+[_Deriving Turbopipes from First Principles_, Part II](./doc/first-principles/part-2-taking-it-apart.md) —
+including what the extra layers cost in event-loop passes, and the one seam the split couldn't cut
+cleanly.
+
 ### Cleanup, in two pieces
 
 Two more exports, both extracted from the teardown described above, because getting it right in one
@@ -212,11 +217,12 @@ pipelines:
     application crashes, a downstream consumer fails, or the OS sends a kill signal, all pending
     concurrent tasks are safely cancelled, preventing silent memory leaks.
 
-**📖 Want to understand the "Why"?** Read our deep-dive article, which walks through the pitfalls
-of the two async pipelines everyone writes first — batching with `asyncio.gather()`, hand-rolled
-`asyncio.Queue` worker pools — and derives the `turbopipes` architecture from first principles,
-through to why `aselect` has to cancel its in-flight pulls before it closes anything. Every
-measurement it quotes ships with the script that produced it:
+**📖 Want to understand the "Why"?** Read our deep-dive guide, in three parts. It walks through the
+pitfalls of the two async pipelines everyone writes first — batching with `asyncio.gather()`,
+hand-rolled `asyncio.Queue` worker pools — and derives the `turbopipes` architecture from first
+principles, through to why a merge has to cancel its in-flight pulls before it closes anything. Then
+it takes that merge apart into `ataskify`, `atag` and `amerge`, shows what each does alone, and adds
+up what the layering costs. Every measurement it quotes ships with the script that produced it:
 
 #### [👉 Read: Deriving Turbopipes from First Principles (Why Async is Harder Than It Looks)](./doc/first-principles.md)
 
