@@ -54,10 +54,13 @@ async def ataskify(
         Between arming a pull and the consumer taking it, this generator is itself
         suspended at an ``await`` inside its own body - which it has to be, or a merge
         over several of these would find every one of them instantly ready and hand the
-        consumer all of them at once, losing both readiness ordering and backpressure.
-        A generator in that state has ``ag_running`` set and cannot be closed, so the
-        in-flight pull is cancelled and awaited before ``gen`` is closed; see
-        :func:`asettle`.
+        consumer all of them at once, losing readiness ordering: a ready source would
+        wait behind whichever one merely happened to sit ahead of it.  Backpressure
+        survives that change - it comes from the ``yield`` rather than the wait, since
+        at most one pull is armed per source either way, and none is re-armed until the
+        consumer comes back.  A generator suspended at an ``await`` inside its own body
+        has ``ag_running`` set and cannot be closed, so the in-flight pull is cancelled
+        and awaited before ``gen`` is closed; see :func:`asettle`.
 
         A caller can tear this generator down two ways, and they differ.  Cancelling
         the task that is awaiting this generator's ``__anext__()`` gets ``gen``'s
