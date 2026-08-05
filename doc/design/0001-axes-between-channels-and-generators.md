@@ -92,6 +92,19 @@ volition; you produce because you were asked to. That asymmetry is why unix `sel
 we lack: it selects on writable descriptors as well as readable ones. Today a turbopipes select can
 only ever watch the read side, because the write side is not a thing you can hold.
 
+[0003](0003-pushable-generators.md) establishes that a producible handle is buildable — and that
+unix's symmetry between read-sets and write-sets does **not** carry over, for a reason worth stating
+here because it constrains every select-shaped API:
+
+> **Arming a read is a reservation. Arming a write is a predicate.**
+
+A read-arm is destructive. It commits the source to producing exactly one item, so it must be
+*owned* across select passes: discard a completed one and the item is lost; cancel a pending one and
+the source is destroyed. A write-arm binds nothing — discard six of them and a fresh one still
+fires. The two halves of a `select` therefore have different lifetimes, which is why write-readiness
+cannot be modelled as just another source in a merge (measured: level-triggered spins at ~1000
+events per 100 ms; edge-triggered stalls forever once the edges stop).
+
 ## Axis 4: completion and error semantics
 
 This is the axis where generators are strictly richer, and it is worth naming because it is the
