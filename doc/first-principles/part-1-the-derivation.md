@@ -412,11 +412,11 @@ the price of having one.
 
 **What it doesn't get: push.** Channels push, generators pull. A Go `select` picks among sends that
 have already happened; a merge over generators arms one pull per source and waits for one of them to
-finish. Channel intuition says a slow consumer blocks the producers, and here it does — but by a
-different mechanism, and one that only holds because of where a single line sits. That is
-[§5.3](#53-backpressure-survives-the-merge).
+finish. Channel intuition says a slow consumer blocks the producers, and here it does — but there is
+no send to block. The consumer simply stops pulling, and the merge, being a generator itself, stops
+arming. That is [§5.5](#55-backpressure-survives-the-merge).
 
-### Attempt one: ask each source in turn
+### 5.1 Attempt one: ask each source in turn
 
 The obvious loop, and the one most people write. Go round the sources, pull from each:
 
@@ -435,21 +435,22 @@ different rhythms, which is the normal case rather than an adversarial one — a
 items ready immediately, and a quiet one that speaks every 50 ms:
 
 ```
-two sources, quiet one speaks every 50ms:
-  round-robin        chatty0@0ms quiet0@50ms chatty1@50ms quiet1@100ms chatty2@100ms quiet2@155ms chatty3@155ms quiet3@205ms
-  first-finished     chatty0@0ms chatty1@0ms chatty2@0ms chatty3@0ms quiet0@50ms quiet1@105ms quiet2@155ms quiet3@205ms
+two sources, quiet one speaks every 50ms; @N = arrived in the Nth 50ms period:
+  round-robin        chatty0@0 quiet0@1 chatty1@1 quiet1@2 chatty2@2 quiet2@3 chatty3@3 quiet3@4
+  first-finished     chatty0@0 chatty1@0 chatty2@0 chatty3@0 quiet0@1 quiet1@2 quiet2@3 quiet3@4
 ```
 
-The chatty source had all four items ready at the start. Round-robin delivered them at 0, 50, 100
-and 155 ms — **at the quiet source's pace**, because `await anext(quiet)` is a pull the entire loop
-is parked on, and nothing else can be taken until it returns.
+The chatty source had all four items ready at the start. Round-robin delivered them one per period —
+**at the quiet source's pace**, because `await anext(quiet)` is a pull the entire loop is parked on,
+and nothing else can be taken until it returns. Arming both and taking whichever finishes first
+delivers all four in the first period, where they were always available.
 
 That is head-of-line blocking, and it is the same defect §2 found in the chunk barrier wearing
 different clothes: a synchronization point nobody asked for, imposed by the shape of the loop rather
 than by the work. The fix has the same shape too. Don't wait on one source; wait on **all** of them
 and take whichever finishes first.
 
-### Attempt two: arm every source, take whichever finishes
+### 5.2 Attempt two: arm every source, take whichever finishes
 
 Keep one pull in flight per source, wait for whichever finishes first, yield it, re-arm that source:
 
@@ -498,7 +499,29 @@ on the way out. For a merge, the teardown is *incomplete*. `aclosing` over the s
 sufficient by itself, and no amount of care in the closing makes it so, because a source suspended
 mid-pull cannot be closed at all until something else reaches it first — which is the next section.
 
-### 5.1 `aclose()` will not touch a generator that's inside its own body
+Before that, the shape the finished thing takes, so §4's call and this one can be read side by side:
+
+```python
+sources = {'slack': slack_events(), 'github': pr_comments(), 'portal': poll_portal()}
+stream = turbopipes.aselect(sources)
+
+async with contextlib.aclosing(stream):
+    async for key, task in stream:
+        try:
+            handle(key, await task)
+        except Exception as exc:
+            log.warning('%s failed; carrying on: %s', key, exc)
+```
+
+**One difference from the prototype above, and it is the same one §4.2 derived.** `aselect` yields
+`(key, task)` rather than `(key, value)` — the prototype called `task.result()` inside the merge,
+which is a simplification that would re-raise a source's failure as the *merge's* own and end the
+whole stream. Unwrapping belongs to the consumer, because "this source failed" and "the merge
+failed" are different events and only the consumer can tell them apart. The key arrives *before*
+the `await` for the same reason: which source spoke is usually what decides how its failure should
+be handled.
+
+### 5.3 `aclose()` will not touch a generator that's inside its own body
 
 A source part-way through serving an `__anext__()` is suspended at an `await` **inside its own
 body** — waiting on a socket, a queue, an event — rather than parked at a `yield`. Consumption can
@@ -549,7 +572,7 @@ state raised from inside the cleanup that was supposed to be handling it. A tear
 the diagnosis of the bug that triggered the teardown is a genuinely bad day, and in the merge above
 it is one `break` away.
 
-### 5.2 What does reach a running generator: cancellation
+### 5.4 What does reach a running generator: cancellation
 
 Cancel its pull. The `CancelledError` is delivered at the `await` inside the generator's body,
 which is an entirely ordinary place to receive one — and unless the source catches it and carries
@@ -579,13 +602,11 @@ Both phases earn their keep, and it's easy to talk yourself out of either one:
   cleaned up by `aclose()` rather than by the cancellation.
 
 The two do overlap, and the overlap is harmless: a source that phase 1 already tore down has
-nothing left for `aclose()` to do. Which is why in
-[`_amerge.py`](../../turbopipes/_amerge.py) the ordering is structural rather than a matter of
-statement order: the exit stack holding the source closes is nested *around* the `try`/`finally`
-that cancels the pulls, so phase 2 cannot start until phase 1 has finished — and still happens if
-phase 1 is itself interrupted. Both halves are named functions in their own right,
-[`aclosing_all`](../../turbopipes/_aclosing.py) and [`asettle`](../../turbopipes/_aclosing.py), for
-reasons that belong to
+nothing left for `aclose()` to do. Which is why the ordering wants to be **structural** rather than
+a matter of statement order: the exit stack holding the source closes is nested *around* the
+`try`/`finally` that cancels the pulls, so phase 2 cannot start until phase 1 has finished — and
+still happens if phase 1 is itself interrupted. `aselect` does it that way, and both halves are
+named functions in their own right, `aclosing_all` and `asettle`, for reasons that belong to
 [Part II](./part-2-taking-it-apart.md#11-the-cleanup-extracted-asettle-and-aclosing_all); what
 matters here is the nesting, not the packaging.
 
@@ -599,7 +620,7 @@ turbopipes.aselect     teardown: quiet
   finally ran for: ['chatty', 'quiet1', 'quiet2'] | frames live: none
 ```
 
-### 5.3 Backpressure survives the merge
+### 5.5 Backpressure survives the merge
 
 Merging is a natural place to lose backpressure, since it's tempting to let each source run and
 buffer whatever arrives. `aselect` doesn't, and the reason is the one §4.1 already gave: the merge
@@ -641,6 +662,8 @@ derived here, and measures the same ladder. Which of them the re-arming line end
 the previous `yield` has been stepped. Read it at the instant of the consume instead and the same
 run yields a different ladder — one of several ways a measurement like this can be quietly
 mis-stated.)
+
+---
 
 ## Where this leaves off
 

@@ -15,8 +15,11 @@ it: the whole stream advances in 50 ms steps.
 Arming both at once and taking whichever finishes first delivers each item at
 roughly the moment it became available, which is what the merge has to do.
 
-Timings are rounded to the nearest 5 ms so the output is stable enough to paste
-into the guide; the point is the shape of the ladder, not the exact figures.
+Arrival is reported as a whole number of quiet-source periods rather than in
+milliseconds, because the period is what the finding is about and a period is
+wide enough that scheduling slop cannot move an item between two of them.  A
+millisecond figure here would be sampled from the run; a period count is fixed
+by the design.
 """
 
 import asyncio
@@ -28,9 +31,13 @@ QUIET_PERIOD = 0.05
 ITEMS = 4
 
 
-def _quantize(elapsed: float) -> int:
-    """Round to the nearest 5 ms, reported in whole milliseconds."""
-    return int(round(elapsed * 1000 / 5.0) * 5)
+def _period(elapsed: float) -> int:
+    """Which quiet-source period this arrival lands in.
+
+    A period is `QUIET_PERIOD` wide, so the few milliseconds of scheduling slop
+    that accumulate across a run cannot carry an arrival into the next one.
+    """
+    return int(round(elapsed / QUIET_PERIOD))
 
 
 async def _chatty() -> AsyncGenerator[str, None]:
@@ -92,12 +99,16 @@ async def _drain(
     started = time.monotonic()
     arrivals = []
     async for _key, item in merge:
-        arrivals.append(f'{item}@{_quantize(time.monotonic() - started)}ms')
+        arrivals.append(f'{item}@{_period(time.monotonic() - started)}')
     print(f'  {label:<18} {" ".join(arrivals)}')
 
 
 async def main() -> None:
-    print(f'two sources, quiet one speaks every {int(QUIET_PERIOD * 1000)}ms:')
+    period_ms = int(QUIET_PERIOD * 1000)
+    print(
+        f'two sources, quiet one speaks every {period_ms}ms; '
+        f'@N = arrived in the Nth {period_ms}ms period:'
+    )
     await _drain('round-robin', _round_robin(_sources()))
     await _drain('first-finished', _first_finished(_sources()))
 

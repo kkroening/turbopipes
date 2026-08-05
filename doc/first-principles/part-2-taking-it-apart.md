@@ -6,13 +6,18 @@
 [Part I — the derivation](./part-1-the-derivation.md) **·** Part II **·**
 [Part III — the API in hindsight](./part-3-the-api-in-hindsight.md)
 
-**This part is for the pieces underneath.** Two reasons to be here: you want `amerge`, `ataskify`
-or `atag` *separately* rather than the composed function, or you want to know what the composed
-function costs you. Both are practitioner questions — this is deeper, not more academic, and
-[Part I](./part-1-the-derivation.md) is genuinely complete on its own for anyone who doesn't have
-one of them.
+**This part is for the pieces underneath.** Three reasons to be here:
 
-It also carries the teardown material Part I left out, since the same machinery is already here.
+- you want `amerge`, `ataskify` or `atag` **separately** rather than the composed function —
+  [§§7–9](#7-amerge-interleaving-and-nothing-else);
+- you want to know what the composed function **costs** you —
+  [§10](#10-putting-it-back-together-and-the-bill), which is a bill rather than a theory;
+- or [Part I](./part-1-the-derivation.md) sent you here for the **teardown** it deliberately left
+  out — [§11](#11-the-cleanup-extracted-asettle-and-aclosing_all), which is a third of this part.
+
+All three are practitioner questions: this is deeper, not more academic. And
+[Part I](./part-1-the-derivation.md) is genuinely complete on its own for anyone who has none of
+them.
 
 [Part I](./part-1-the-derivation.md) ends with a merge that works. This part asks what it is made
 of — because it turns out to be four separable jobs wearing one function's name, and a caller who
@@ -41,7 +46,7 @@ async def merge(sources):
         done, _ = await asyncio.wait(pulls, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             key = pulls.pop(task)                          # identity
-            if is_exhausted(task):                         # §5.4's check; no sentinel
+            if is_exhausted(task):                         # §7.3's check; no sentinel
                 continue
             yield key, task                                # ...and the task, not the value
             pulls[asyncio.create_task(anext(sources[key]))] = key
@@ -205,7 +210,7 @@ whereas a merge with its own section has to be set beside the merge anyone write
 against it. That is the row above, and it is what this section adds. The behaviour was never the new
 part.
 
-### Exhaustion doesn't need a sentinel
+### 7.3 Exhaustion doesn't need a sentinel
 
 A merge needs to hear that a source has run out, so that it can stop re-arming that one without
 ending the whole stream. The obvious way to carry that news is a sentinel value — and a sentinel
@@ -336,7 +341,7 @@ Worth being precise about what *doesn't* break, since it is tempting to add it t
 backpressure survives the eager variant intact. Each source still has at most one pull in flight and
 nothing new is armed while the consumer is away, so the produced-but-unconsumed gap stays at 1 in
 both arrangements — the last two rows above, measured the way
-[§5.3](./part-1-the-derivation.md#53-backpressure-survives-the-merge) measures it. What is lost is
+[§5.5](./part-1-the-derivation.md#55-backpressure-survives-the-merge) measures it. What is lost is
 readiness ordering, and that is enough.
 
 This is the one place where the guide contradicts the library's own prose rather than merely
@@ -347,7 +352,7 @@ gap is measured here instead of being asserted.[^ataskify-docstring]
 So `ataskify` has to be suspended at an `await` inside its own body between arming a pull and
 handing it over. That is an unremarkable state for a generator to be in and a consequential one to
 be in during teardown, because a generator in that state cannot be closed —
-[§5.1](./part-1-the-derivation.md#51-aclose-will-not-touch-a-generator-thats-inside-its-own-body),
+[§5.3](./part-1-the-derivation.md#53-aclose-will-not-touch-a-generator-thats-inside-its-own-body),
 arriving one layer down from where it was first met.
 [§11](#11-the-cleanup-extracted-asettle-and-aclosing_all) is the bill for this section.
 
@@ -537,7 +542,7 @@ while the monolith resolved their different periods.
 
 This is worth being scrupulous about in both directions. Nothing documented changed: completion
 order holds, per-source ordering holds, §7.2's tie-break holds, and the backpressure bound of
-[§5.3](./part-1-the-derivation.md#53-backpressure-survives-the-merge) holds. Code that depended on a
+[§5.5](./part-1-the-derivation.md#55-backpressure-survives-the-merge) holds. Code that depended on a
 particular cross-source interleaving was depending on something the merge never promised, and would
 have been broken by a source getting slightly faster.
 
@@ -593,10 +598,12 @@ that composes them.
 
 ## 11. The cleanup, extracted: `asettle` and `aclosing_all`
 
-[§5.2](./part-1-the-derivation.md#52-what-does-reach-a-running-generator-cancellation) derived a
+[§5.4](./part-1-the-derivation.md#54-what-does-reach-a-running-generator-cancellation) derived a
 two-phase teardown — cancel every in-flight pull and await it, *then* close every source — and got
 it right inside one function's `try`/`finally`. §6 flagged the worry that splitting the function in
 three would mean getting it right in three places.
+
+Both live in the source alongside the merge that uses them: [`asettle` and `aclosing_all`](../../turbopipes/_aclosing.py), and [`_amerge.py`](../../turbopipes/_amerge.py) for the nesting [§11.2](#112-the-nesting-is-not-optional) describes.
 
 It does mean that, in two of the three layers. The two phases also came out as named, exported
 functions in the process, which is worth doing on its own account:
@@ -688,7 +695,7 @@ that checks for leaks passes. What is lost is the block's last line. The consume
 not survive: it was replaced, on the way out, by a complaint about generator state raised from the
 cleanup that was supposed to be handling it.
 
-[§5.1](./part-1-the-derivation.md#51-aclose-will-not-touch-a-generator-thats-inside-its-own-body)
+[§5.3](./part-1-the-derivation.md#53-aclose-will-not-touch-a-generator-thats-inside-its-own-body)
 called that a genuinely bad day when the merge was one function. It is the same bad day here, and
 the packaging is what makes it avoidable: `aclosing_all` is a context manager rather than a
 `finally` body specifically so that the nesting is a thing you can see in the indentation.
@@ -720,7 +727,7 @@ built programmatically, and `aclosing_all` is that pattern packaged, with §11.2
 attached to it where it will be read.
 
 The two rows that do close everything also reproduce
-[below](#asyncexitstack-runs-every-callback-it-doesnt-collect-their-failures):
+[§11.5](#115-asyncexitstack-runs-every-callback-it-doesnt-collect-their-failures):
 all three sources close, and exactly one of the two cleanup failures comes out. The other is not
 suppressed and not chained — it is gone. *"Every cleanup ran"* and *"you saw every cleanup failure"*
 remain different guarantees, and this gives you the first.
@@ -779,48 +786,14 @@ being retired in favour of the three. A caller composing the pieces by hand can 
 themselves, and will forget, because nothing about the happy path reminds them. `aselect` is the
 arrangement with the name already wired to both places.
 
-### 11.5 The report's one gap today
+### 11.5 `AsyncExitStack` runs every callback; it doesn't collect their failures
 
-One caveat on the channel §11.4 just called the only one this failure has: as the library stands
-today, the report does not always happen.[^asettle-report]
-
-`asettle` cancels the pulls, waits for them with `gather(..., return_exceptions=True)`, and *then*
-reports what each cancelled pull came back holding. The reporting is after the wait, and the wait
-does not always return. A further `cancel()` arriving while that gather is open cancels the
-**gather**, which then raises `CancelledError` once its children finish
-([gh-32684](https://github.com/python/cpython/issues/32684)) — and `return_exceptions=True` does not
-prevent it, because that flag governs what the *children* raise, not what is done to the gather
-itself. Which is
-[below](#what-return_exceptionstrue-does-not-bound)'s
-lesson arriving in a second costume: the flag is not the thing drawing the line you think it is.
-Leaving by that route skips the reporting entirely, and the failure is dropped.
-
-The window is not an instant — it is the whole duration of the teardown's gather, so it widens with
-however long the sources take to clean up. Sweeping the gap between two cancellations in event-loop
-passes, against sources whose own cleanup awaits once and three times (`1` = reported, `0` =
-dropped):
-
-```
-cleanup awaits 1x      1  0  0  0  0  1  1  1  1  1  1  1
-cleanup awaits 3x      1  0  0  0  0  0  0  1  1  1  1  1
-                       0  1  2  3  4  5  6  7  8  9 10 11
-                       ^ event-loop passes between the two cancellations
-```
-
-The damage is confined to a lost diagnostic. Every source is still closed, its own cleanup still
-runs, no task is left pending, and no cancellation is swallowed — §11.1's and §11.2's results are
-unaffected. It is worth knowing anyway, because it is the difference between "this failure is always
-reported" and "this failure is reported unless the teardown is itself interrupted", and only one of
-those is a thing to build an alerting story on.
-
-### `AsyncExitStack` runs every callback; it doesn't collect their failures
-
-Since we're leaning on `AsyncExitStack` to hold the closes, it's worth knowing precisely what it
+`aclosing_all` is an `AsyncExitStack` underneath, so it is worth knowing precisely what that
 promises when the closes themselves fail — this one surprises people, and it cuts both ways.
 
 The good half: a callback that raises does **not** abandon the remaining ones. The stack keeps
 going, so a closeable source still closes even when it sits behind two failures. That is what
-makes the structural ordering above safe rather than merely tidy.
+makes [§11.2](#112-the-nesting-is-not-optional)'s nesting safe rather than merely tidy.
 
 The other half. Three sources parked at a `yield`, each with a `finally` that blows up:
 
@@ -863,7 +836,9 @@ it reaches a `None`. Here it reaches one immediately: the escaping `CleanupError
 The transferable lesson, for any teardown that closes several things: *"every cleanup ran"* and
 *"you saw every cleanup failure"* are different guarantees, and a stack gives you the first one.
 
-### What `return_exceptions=True` does not bound
+---
+
+### 11.6 What `return_exceptions=True` does not bound
 
 Phase 1 finishes with `await asyncio.gather(*pulls, return_exceptions=True)`, and it's natural to
 read that flag as drawing a line at `Exception` — collecting the ordinary failures, letting the
@@ -896,7 +871,44 @@ by the gather") is true while the obvious explanation for it ("`return_exception
 catches `Exception`") is false. Anyone who later "tightens" that gather on the strength of the
 explanation will be adjusting a flag that was never the thing drawing that line.
 
+
 ---
+
+---
+
+### 11.7 The report's one gap today
+
+One caveat on the channel §11.4 just called the only one this failure has: as the library stands
+today, the report does not always happen.[^asettle-report]
+
+`asettle` cancels the pulls, waits for them with `gather(..., return_exceptions=True)`, and *then*
+reports what each cancelled pull came back holding. The reporting is after the wait, and the wait
+does not always return. A further `cancel()` arriving while that gather is open cancels the
+**gather**, which then raises `CancelledError` once its children finish
+([gh-32684](https://github.com/python/cpython/issues/32684)) — and `return_exceptions=True` does not
+prevent it, because that flag governs what the *children* raise, not what is done to the gather
+itself. Which is
+[§11.6](#116-what-return_exceptionstrue-does-not-bound)'s
+lesson arriving in a second costume: the flag is not the thing drawing the line you think it is.
+Leaving by that route skips the reporting entirely, and the failure is dropped.
+
+The window is not an instant — it is the whole duration of the teardown's gather, so it widens with
+however long the sources take to clean up. Sweeping the gap between two cancellations in event-loop
+passes, against sources whose own cleanup awaits once and three times (`1` = reported, `0` =
+dropped):
+
+```
+cleanup awaits 1x      1  0  0  0  0  1  1  1  1  1  1  1
+cleanup awaits 3x      1  0  0  0  0  0  0  1  1  1  1  1
+                       0  1  2  3  4  5  6  7  8  9 10 11
+                       ^ event-loop passes between the two cancellations
+```
+
+The damage is confined to a lost diagnostic. Every source is still closed, its own cleanup still
+runs, no task is left pending, and no cancellation is swallowed — §11.1's and §11.2's results are
+unaffected. It is worth knowing anyway, because it is the difference between "this failure is always
+reported" and "this failure is reported unless the teardown is itself interrupted", and only one of
+those is a thing to build an alerting story on.
 
 ---
 
