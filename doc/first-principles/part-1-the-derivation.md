@@ -398,23 +398,47 @@ for {
 ```
 
 That is what this section arrives at. `aselect` is `select` in a `for` loop, over async generators
-instead of channels. Two things about the translation are worth holding onto, because one of them
-is the reason to bother and the other is a trap laid specifically for the reader the analogy
-attracts.
+instead of channels. The analogy is closer than the usual summary of it — "channels push, generators
+pull" — suggests, and that summary is worth dismantling before the derivation rather than after,
+because it will mislead you about what
+[§5.2](#52-attempt-two-arm-every-source-take-whichever-finishes) is doing. A
+value crosses from producer to consumer at the hand-off either way; the direction of the data is not
+what differs. One property is, and everything below is that property seen from two sides:
 
-**What Python gets that Go doesn't: an owner.** A channel has no owner. Closing one is a convention
-between goroutines, and shutting a set of them down means building a `done` channel by hand and
-trusting every goroutine to select on it — the language will not tell you when one didn't. An async
-generator has an owner by construction: whoever is consuming it. Closing the consumer is what closes
-the sources, so the set tears down through one handle rather than through a protocol everybody has
-to honour. That is closer to a supervisor than to a channel, and most of the rest of this part is
-the price of having one.
+**A generator's consumer is its scheduler.** A goroutine is registered with the Go runtime, which
+resumes it whenever it is runnable. An async generator is registered with nobody. It advances only
+inside a consumer's `anext()`, and `yield` is that call's return value — not an unprompted hand-off.
 
-**What it doesn't get: push.** Channels push, generators pull. A Go `select` picks among sends that
-have already happened; a merge over generators arms one pull per source and waits for one of them to
-finish. Channel intuition says a slow consumer blocks the producers, and here it does — but there is
-no send to block. The consumer simply stops pulling, and the merge, being a generator itself, stops
-arming. That is [§5.5](#55-backpressure-survives-the-merge).
+**What that buys: an owner.** A channel has no owner. Closing one is a convention between
+goroutines, and shutting a set of them down means building a `done` channel by hand and trusting
+every goroutine to select on it — the language will not tell you when one didn't. A generator's
+consumer, being the only thing that can advance it, is also the only thing that has to stop: closing
+the consumer closes the sources, so the set tears down through one handle rather than through a
+protocol everybody has to honour. That is closer to a supervisor than to a channel, and most of the
+rest of this part is the price of having one.
+
+**What that costs: one item of lookahead.** Park a goroutine on `ch <- v` and the value is already
+computed — the producer did that work while the consumer was still busy with the previous item, and
+now waits to hand it over. Park a generator at `yield v` and it is suspended *before* computing the
+next one, and will not start until asked. An unbuffered channel is a one-item pipeline; a bare
+generator is a zero-item pipeline, which is measurable rather than notional: give a source and a
+sink 50 ms of work each and three items take ~300 ms through a generator, because producing and
+consuming never overlap.
+
+So the arming in §5.2 is not overcoming a push/pull mismatch. **It is supplying by hand the one slot
+of depth a channel has for free** — `ensure_future(anext(gen))` *is* the parked send. §5.1 stalls
+for the matching reason: while you await the quiet source, the chatty one is not slow, it is not
+running, because nothing has asked it to.
+
+That depth is a default rather than a law — a buffered channel is an n-item pipeline, and so would
+be a wrapper that eagerly pulls a generator into a buffer. What has no such wrapper is the arity. A
+channel is a rendezvous point that any number of goroutines may send to and receive from; a
+generator is a private handle. Two consumers sharing one split its items between them rather than
+each seeing the whole stream, and calling `anext()` on one that is already running is a
+`RuntimeError`, not a queue.
+
+Backpressure survives all of it, just not as a blocked send: the consumer stops pulling, and the
+merge, being a generator itself, stops arming. That is [§5.5](#55-backpressure-survives-the-merge).
 
 ### 5.1 Attempt one: ask each source in turn
 
