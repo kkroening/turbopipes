@@ -6,14 +6,24 @@
 [Part II — taking it apart](./part-2-taking-it-apart.md) **·**
 [Part III — the API in hindsight](./part-3-the-api-in-hindsight.md)
 
+**This part is for using the library.** If you want `aparallel` or `aselect` to do a job, and want
+to know why they are shaped the way they are before trusting them with it, this is the whole of
+what you need — read it and stop. Nothing here assumes you intend to open the source.
+
 Nothing about the `turbopipes` API is derived here from taste. Each of its decisions is the answer
 to a specific way that the obvious designs fall over — usually not on the happy path, but at the
 moment a consumer stops consuming.
 
-So this part starts with no library at all: the problem, then the two pipelines everyone writes
-before they write a third, each run into a consumer that leaves early. What is left standing
-afterwards is `aparallel` for fanning one stream out and a merge for fanning several streams in,
-along with the teardown discipline that merging turns out to require.
+So this part starts with no library at all: the problem, then the pipelines everyone writes before
+they write a third, each run into a consumer that leaves early. What is left standing afterwards is
+`aparallel` for fanning one stream out and `aselect` for fanning several streams in, along with the
+teardown discipline that turns out to be the price of both.
+
+That teardown coverage is deliberately partial. It takes the failures that change how you *think*
+about async generators — the ones worth carrying into code that never imports this library — and
+leaves the exhaustive treatment to
+[Part II](./part-2-taking-it-apart.md#11-the-cleanup-extracted-asettle-and-aclosing_all). Being
+complete here would cost the thing this part is for.
 
 Every measurement quoted is produced by a script alongside this file; the
 [index](../first-principles.md#the-measurements) explains the arrangement.
@@ -363,14 +373,110 @@ stopped consuming.
 
 ---
 
-## 5. Deriving `aselect` — the mirror-image problem
+## 5. The other half: many streams in
 
 `aparallel` fans one stream **out** across many tasks. The other half of the problem is fanning
-many streams **in**: several pollers, several subscriptions, several queues, one loop that wants
-whichever of them speaks next.
+many streams **in**.
 
-The design is nearly forced, and it's a good one. Keep one pull in flight per source, wait for
-whichever finishes first, yield it, re-arm that source:
+Something has to watch several conversations at once and react to whichever speaks next. Messages
+arriving in a chat workspace; comments landing on a pull request; a portal with no webhook that has
+to be polled on a timer. Three sources, three completely different rhythms, and one loop that wants
+to act on whatever is ready without caring which of them produced it.
+
+If you have written Go, you already have a name for this, and it is worth saying before the
+derivation rather than after, because it is the closest thing in any mainstream language:
+
+```go
+for {
+    select {
+    case msg := <-slack:
+        handle(msg)
+    case ev := <-github:
+        handle(ev)
+    }
+}
+```
+
+That is what this section arrives at. `aselect` is `select` in a `for` loop, over async generators
+instead of channels. The analogy is closer than the usual summary of it — "channels push, generators
+pull" — suggests, and that summary is worth dismantling before the derivation rather than after,
+because it will mislead you about what
+[§5.2](#52-attempt-two-arm-every-source-take-whichever-finishes) is doing. A
+value crosses from producer to consumer at the hand-off either way; the direction of the data is not
+what differs. One property is, and everything below is that property seen from two sides:
+
+**A generator's consumer is its scheduler.** A goroutine is registered with the Go runtime, which
+resumes it whenever it is runnable. An async generator is registered with nobody. It advances only
+inside a consumer's `anext()`, and `yield` is that call's return value — not an unprompted hand-off.
+
+**What that buys: an owner.** A channel has no owner. Closing one is a convention between
+goroutines, and shutting a set of them down means building a `done` channel by hand and trusting
+every goroutine to select on it — the language will not tell you when one didn't. A generator's
+consumer, being the only thing that can advance it, is also the only thing that has to stop: closing
+the consumer closes the sources, so the set tears down through one handle rather than through a
+protocol everybody has to honour. That is closer to a supervisor than to a channel, and most of the
+rest of this part is the price of having one.
+
+**What that costs: one item of lookahead.** Park a goroutine on `ch <- v` and the value is already
+computed — the producer did that work while the consumer was still busy with the previous item, and
+now waits to hand it over. Park a generator at `yield v` and it is suspended *before* computing the
+next one, and will not start until asked. An unbuffered channel is a one-item pipeline; a bare
+generator is a zero-item pipeline, which is measurable rather than notional: give a source and a
+sink 50 ms of work each and three items take ~300 ms through a generator, because producing and
+consuming never overlap.
+
+So the arming in §5.2 is not overcoming a push/pull mismatch. **It is supplying by hand the one slot
+of depth a channel has for free** — `ensure_future(anext(gen))` *is* the parked send. §5.1 stalls
+for the matching reason: while you await the quiet source, the chatty one is not slow, it is not
+running, because nothing has asked it to.
+
+That depth is a default rather than a law — a buffered channel is an n-item pipeline, and so would
+be a wrapper that eagerly pulls a generator into a buffer. What has no such wrapper is the arity. A
+channel is a rendezvous point that any number of goroutines may send to and receive from; a
+generator is a private handle. Two consumers sharing one split its items between them rather than
+each seeing the whole stream, and calling `anext()` on one that is already running is a
+`RuntimeError`, not a queue.
+
+Backpressure survives all of it, just not as a blocked send: the consumer stops pulling, and the
+merge, being a generator itself, stops arming. That is [§5.5](#55-backpressure-survives-the-merge).
+
+### 5.1 Attempt one: ask each source in turn
+
+The obvious loop, and the one most people write. Go round the sources, pull from each:
+
+```python
+async def round_robin(sources):
+    while sources:
+        for key, gen in list(sources.items()):
+            try:
+                yield key, await anext(gen)
+            except StopAsyncIteration:
+                del sources[key]
+```
+
+It merges, in the sense that items from every source come out of one loop. Now give the sources
+different rhythms, which is the normal case rather than an adversarial one — a chatty source with
+items ready immediately, and a quiet one that speaks every 50 ms:
+
+```
+two sources, quiet one speaks every 50ms; @N = arrived in the Nth 50ms period:
+  round-robin        chatty0@0 quiet0@1 chatty1@1 quiet1@2 chatty2@2 quiet2@3 chatty3@3 quiet3@4
+  first-finished     chatty0@0 chatty1@0 chatty2@0 chatty3@0 quiet0@1 quiet1@2 quiet2@3 quiet3@4
+```
+
+The chatty source had all four items ready at the start. Round-robin delivered them one per period —
+**at the quiet source's pace**, because `await anext(quiet)` is a pull the entire loop is parked on,
+and nothing else can be taken until it returns. Arming both and taking whichever finishes first
+delivers all four in the first period, where they were always available.
+
+That is head-of-line blocking, and it is the same defect §2 found in the chunk barrier wearing
+different clothes: a synchronization point nobody asked for, imposed by the shape of the loop rather
+than by the work. The fix has the same shape too. Don't wait on one source; wait on **all** of them
+and take whichever finishes first.
+
+### 5.2 Attempt two: arm every source, take whichever finishes
+
+Keep one pull in flight per source, wait for whichever finishes first, yield it, re-arm that source:
 
 ```python
 async def merge(sources):
@@ -417,7 +523,29 @@ on the way out. For a merge, the teardown is *incomplete*. `aclosing` over the s
 sufficient by itself, and no amount of care in the closing makes it so, because a source suspended
 mid-pull cannot be closed at all until something else reaches it first — which is the next section.
 
-### 5.1 `aclose()` will not touch a generator that's inside its own body
+Before that, the shape the finished thing takes, so §4's call and this one can be read side by side:
+
+```python
+sources = {'slack': slack_events(), 'github': pr_comments(), 'portal': poll_portal()}
+stream = turbopipes.aselect(sources)
+
+async with contextlib.aclosing(stream):
+    async for key, task in stream:
+        try:
+            handle(key, await task)
+        except Exception as exc:
+            log.warning('%s failed; carrying on: %s', key, exc)
+```
+
+**One difference from the prototype above, and it is the same one §4.2 derived.** `aselect` yields
+`(key, task)` rather than `(key, value)` — the prototype called `task.result()` inside the merge,
+which is a simplification that would re-raise a source's failure as the *merge's* own and end the
+whole stream. Unwrapping belongs to the consumer, because "this source failed" and "the merge
+failed" are different events and only the consumer can tell them apart. The key arrives *before*
+the `await` for the same reason: which source spoke is usually what decides how its failure should
+be handled.
+
+### 5.3 `aclose()` will not touch a generator that's inside its own body
 
 A source part-way through serving an `__anext__()` is suspended at an `await` **inside its own
 body** — waiting on a socket, a queue, an event — rather than parked at a `yield`. Consumption can
@@ -468,7 +596,7 @@ state raised from inside the cleanup that was supposed to be handling it. A tear
 the diagnosis of the bug that triggered the teardown is a genuinely bad day, and in the merge above
 it is one `break` away.
 
-### 5.2 What does reach a running generator: cancellation
+### 5.4 What does reach a running generator: cancellation
 
 Cancel its pull. The `CancelledError` is delivered at the `await` inside the generator's body,
 which is an entirely ordinary place to receive one — and unless the source catches it and carries
@@ -498,13 +626,11 @@ Both phases earn their keep, and it's easy to talk yourself out of either one:
   cleaned up by `aclose()` rather than by the cancellation.
 
 The two do overlap, and the overlap is harmless: a source that phase 1 already tore down has
-nothing left for `aclose()` to do. Which is why in
-[`_amerge.py`](../../turbopipes/_amerge.py) the ordering is structural rather than a matter of
-statement order: the exit stack holding the source closes is nested *around* the `try`/`finally`
-that cancels the pulls, so phase 2 cannot start until phase 1 has finished — and still happens if
-phase 1 is itself interrupted. Both halves are named functions in their own right,
-[`aclosing_all`](../../turbopipes/_aclosing.py) and [`asettle`](../../turbopipes/_aclosing.py), for
-reasons that belong to
+nothing left for `aclose()` to do. Which is why the ordering wants to be **structural** rather than
+a matter of statement order: the exit stack holding the source closes is nested *around* the
+`try`/`finally` that cancels the pulls, so phase 2 cannot start until phase 1 has finished — and
+still happens if phase 1 is itself interrupted. `aselect` does it that way, and both halves are
+named functions in their own right, `aclosing_all` and `asettle`, for reasons that belong to
 [Part II](./part-2-taking-it-apart.md#11-the-cleanup-extracted-asettle-and-aclosing_all); what
 matters here is the nesting, not the packaging.
 
@@ -517,81 +643,6 @@ hand-rolled 2-phase    teardown: quiet
 turbopipes.aselect     teardown: quiet
   finally ran for: ['chatty', 'quiet1', 'quiet2'] | frames live: none
 ```
-
-### 5.3 An aside: `AsyncExitStack` runs every callback; it doesn't collect their failures
-
-Since we're leaning on `AsyncExitStack` to hold the closes, it's worth knowing precisely what it
-promises when the closes themselves fail — this one surprises people, and it cuts both ways.
-
-The good half: a callback that raises does **not** abandon the remaining ones. The stack keeps
-going, so a closeable source still closes even when it sits behind two failures. That is what
-makes the structural ordering above safe rather than merely tidy.
-
-The other half. Three sources parked at a `yield`, each with a `finally` that blows up:
-
-```python
-async def parked(name):
-    try:
-        while True:
-            yield f'{name}-item'
-    finally:
-        raise CleanupError(f'{name} cleanup blew up')
-```
-
-```
-escaped   : CleanupError: p1 cleanup blew up
-full chain: ['CleanupError: p1 cleanup blew up', 'GeneratorExit: ']
-all closed: [True, True, True]
-```
-
-All three closed. **One** failure came out. The other two are not suppressed and not chained onto
-it — they are gone, and nothing anywhere says so.
-
-The mechanism is a few lines of `contextlib`:
-
-```python
-def _fix_exception_context(new_exc, old_exc):
-    while 1:
-        exc_context = new_exc.__context__
-        if exc_context is None or exc_context is old_exc:
-            # Context is already set correctly (see issue 20317)
-            return
-        ...
-```
-
-The stack *repairs* an exception chain that already exists; it does not build one. It walks the new
-exception's `__context__` looking for the place to splice the old one on, and gives up the moment
-it reaches a `None`. Here it reaches one immediately: the escaping `CleanupError` was raised from a
-`finally` running under the `GeneratorExit` that `aclose()` threw in, so its `__context__` is that
-`GeneratorExit` — whose own context is `None`. Walk over, nothing spliced, earlier failure gone.
-
-The transferable lesson, for any teardown that closes several things: *"every cleanup ran"* and
-*"you saw every cleanup failure"* are different guarantees, and a stack gives you the first one.
-
-### 5.4 Exhaustion doesn't need a sentinel
-
-A merge needs to hear that a source has run out, so that it can stop re-arming that one without
-ending the whole stream. The obvious way to carry that news is a sentinel value — and a sentinel
-is contagious: it widens the public type of everything downstream to
-`asyncio.Task[T | type[_Exhausted]]` and puts an `isinstance` check in the consumer's loop.
-
-No sentinel is needed here, courtesy of PEP 525:
-
-```python
-async def src():
-    raise StopAsyncIteration('from the body')
-    yield
-```
-
-```
-RuntimeError: async generator raised StopAsyncIteration
-  __cause__: StopAsyncIteration('from the body')
-```
-
-A source *cannot* hand you a `StopAsyncIteration` of its own; the interpreter converts it. So a
-`StopAsyncIteration` arriving on a pull task means exhaustion and nothing else — it is never a
-failure the consumer might have wanted to see. The exhaustion signal stays inside the iteration
-protocol where it started, and the yielded type stays honestly `asyncio.Task[T]`.
 
 ### 5.5 Backpressure survives the merge
 
@@ -635,39 +686,6 @@ derived here, and measures the same ladder. Which of them the re-arming line end
 the previous `yield` has been stepped. Read it at the instant of the consume instead and the same
 run yields a different ladder — one of several ways a measurement like this can be quietly
 mis-stated.)
-
-### 5.6 One last trap: what `return_exceptions=True` does not bound
-
-Phase 1 finishes with `await asyncio.gather(*pulls, return_exceptions=True)`, and it's natural to
-read that flag as drawing a line at `Exception` — collecting the ordinary failures, letting the
-serious ones through. It draws no such line:
-
-```
-Exception    : gather returned [ValueError('v')]
-BaseException: gather returned [Boom('b')]
-KeyboardInterrupt: gather RAISED CancelledError | task.exception() -> KeyboardInterrupt
-escaped asyncio.run: KeyboardInterrupt
-```
-
-`gather` stores a `BaseException` as readily as a `ValueError`. What keeps `KeyboardInterrupt` and
-`SystemExit` out of that list is a different mechanism sitting one layer down — `Task`'s step
-handler, which special-cases exactly those two, storing them *and* re-raising into the loop (shown
-here in the pure-Python `asyncio/tasks.py`; on a default build it's the `_asyncio` accelerator that
-runs, carrying the same special case):
-
-```python
-except (KeyboardInterrupt, SystemExit) as exc:
-    super().set_exception(exc)
-    raise
-except BaseException as exc:
-    super().set_exception(exc)
-```
-
-The run comes apart before the teardown gets any further, which is the outcome you want. But it is
-worth knowing which line of code is producing it, because the observable ("Ctrl-C isn't swallowed
-by the gather") is true while the obvious explanation for it ("`return_exceptions=True` only
-catches `Exception`") is false. Anyone who later "tightens" that gather on the strength of the
-explanation will be adjusting a flag that was never the thing drawing that line.
 
 ---
 

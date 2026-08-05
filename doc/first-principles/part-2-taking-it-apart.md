@@ -6,6 +6,19 @@
 [Part I — the derivation](./part-1-the-derivation.md) **·** Part II **·**
 [Part III — the API in hindsight](./part-3-the-api-in-hindsight.md)
 
+**This part is for the pieces underneath.** Three reasons to be here:
+
+- you want `amerge`, `ataskify` or `atag` **separately** rather than the composed function —
+  [§§7–9](#7-amerge-interleaving-and-nothing-else);
+- you want to know what the composed function **costs** you —
+  [§10](#10-putting-it-back-together-and-the-bill), which is a bill rather than a theory;
+- or [Part I](./part-1-the-derivation.md) sent you here for the **teardown** it deliberately left
+  out — [§11](#11-the-cleanup-extracted-asettle-and-aclosing_all), which is a third of this part.
+
+All three are practitioner questions: this is deeper, not more academic. And
+[Part I](./part-1-the-derivation.md) is genuinely complete on its own for anyone who has none of
+them.
+
 [Part I](./part-1-the-derivation.md) ends with a merge that works. This part asks what it is made
 of — because it turns out to be four separable jobs wearing one function's name, and a caller who
 wants three of them should not have to take all four.
@@ -23,7 +36,7 @@ Every measurement quoted is produced by a script alongside this file; the
 
 ## 6. Four jobs in one function
 
-Here is [§5](./part-1-the-derivation.md#5-deriving-aselect--the-mirror-image-problem)'s merge again,
+Here is [§5](./part-1-the-derivation.md#5-the-other-half-many-streams-in)'s merge again,
 with the teardown left out to keep it readable:
 
 ```python
@@ -33,7 +46,7 @@ async def merge(sources):
         done, _ = await asyncio.wait(pulls, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             key = pulls.pop(task)                          # identity
-            if is_exhausted(task):                         # §5.4's check; no sentinel
+            if is_exhausted(task):                         # §7.3's check; no sentinel
                 continue
             yield key, task                                # ...and the task, not the value
             pulls[asyncio.create_task(anext(sources[key]))] = key
@@ -197,6 +210,31 @@ whereas a merge with its own section has to be set beside the merge anyone write
 against it. That is the row above, and it is what this section adds. The behaviour was never the new
 part.
 
+### 7.3 Exhaustion doesn't need a sentinel
+
+A merge needs to hear that a source has run out, so that it can stop re-arming that one without
+ending the whole stream. The obvious way to carry that news is a sentinel value — and a sentinel
+is contagious: it widens the public type of everything downstream to
+`asyncio.Task[T | type[_Exhausted]]` and puts an `isinstance` check in the consumer's loop.
+
+No sentinel is needed here, courtesy of PEP 525:
+
+```python
+async def src():
+    raise StopAsyncIteration('from the body')
+    yield
+```
+
+```
+RuntimeError: async generator raised StopAsyncIteration
+  __cause__: StopAsyncIteration('from the body')
+```
+
+A source *cannot* hand you a `StopAsyncIteration` of its own; the interpreter converts it. So a
+`StopAsyncIteration` arriving on a pull task means exhaustion and nothing else — it is never a
+failure the consumer might have wanted to see. The exhaustion signal stays inside the iteration
+protocol where it started, and the yielded type stays honestly `asyncio.Task[T]`.
+
 ---
 
 ## 8. `ataskify`: whose failure is it
@@ -314,7 +352,7 @@ gap is measured here instead of being asserted.[^ataskify-docstring]
 So `ataskify` has to be suspended at an `await` inside its own body between arming a pull and
 handing it over. That is an unremarkable state for a generator to be in and a consequential one to
 be in during teardown, because a generator in that state cannot be closed —
-[§5.1](./part-1-the-derivation.md#51-aclose-will-not-touch-a-generator-thats-inside-its-own-body),
+[§5.3](./part-1-the-derivation.md#53-aclose-will-not-touch-a-generator-thats-inside-its-own-body),
 arriving one layer down from where it was first met.
 [§11](#11-the-cleanup-extracted-asettle-and-aclosing_all) is the bill for this section.
 
@@ -560,10 +598,12 @@ that composes them.
 
 ## 11. The cleanup, extracted: `asettle` and `aclosing_all`
 
-[§5.2](./part-1-the-derivation.md#52-what-does-reach-a-running-generator-cancellation) derived a
+[§5.4](./part-1-the-derivation.md#54-what-does-reach-a-running-generator-cancellation) derived a
 two-phase teardown — cancel every in-flight pull and await it, *then* close every source — and got
 it right inside one function's `try`/`finally`. §6 flagged the worry that splitting the function in
 three would mean getting it right in three places.
+
+Both live in the source alongside the merge that uses them: [`asettle` and `aclosing_all`](../../turbopipes/_aclosing.py), and [`_amerge.py`](../../turbopipes/_amerge.py) for the nesting [§11.2](#112-the-nesting-is-not-optional) describes.
 
 It does mean that, in two of the three layers. The two phases also came out as named, exported
 functions in the process, which is worth doing on its own account:
@@ -655,7 +695,7 @@ that checks for leaks passes. What is lost is the block's last line. The consume
 not survive: it was replaced, on the way out, by a complaint about generator state raised from the
 cleanup that was supposed to be handling it.
 
-[§5.1](./part-1-the-derivation.md#51-aclose-will-not-touch-a-generator-thats-inside-its-own-body)
+[§5.3](./part-1-the-derivation.md#53-aclose-will-not-touch-a-generator-thats-inside-its-own-body)
 called that a genuinely bad day when the merge was one function. It is the same bad day here, and
 the packaging is what makes it avoidable: `aclosing_all` is a context manager rather than a
 `finally` body specifically so that the nesting is a thing you can see in the indentation.
@@ -687,7 +727,7 @@ built programmatically, and `aclosing_all` is that pattern packaged, with §11.2
 attached to it where it will be read.
 
 The two rows that do close everything also reproduce
-[§5.3](./part-1-the-derivation.md#53-an-aside-asyncexitstack-runs-every-callback-it-doesnt-collect-their-failures):
+[§11.5](#115-asyncexitstack-runs-every-callback-it-doesnt-collect-their-failures):
 all three sources close, and exactly one of the two cleanup failures comes out. The other is not
 suppressed and not chained — it is gone. *"Every cleanup ran"* and *"you saw every cleanup failure"*
 remain different guarantees, and this gives you the first.
@@ -746,7 +786,97 @@ being retired in favour of the three. A caller composing the pieces by hand can 
 themselves, and will forget, because nothing about the happy path reminds them. `aselect` is the
 arrangement with the name already wired to both places.
 
-### 11.5 The report's one gap today
+### 11.5 `AsyncExitStack` runs every callback; it doesn't collect their failures
+
+`aclosing_all` is an `AsyncExitStack` underneath, so it is worth knowing precisely what that
+promises when the closes themselves fail — this one surprises people, and it cuts both ways.
+
+The good half: a callback that raises does **not** abandon the remaining ones. The stack keeps
+going, so a closeable source still closes even when it sits behind two failures. That is what
+makes [§11.2](#112-the-nesting-is-not-optional)'s nesting safe rather than merely tidy.
+
+The other half. Three sources parked at a `yield`, each with a `finally` that blows up:
+
+```python
+async def parked(name):
+    try:
+        while True:
+            yield f'{name}-item'
+    finally:
+        raise CleanupError(f'{name} cleanup blew up')
+```
+
+```
+escaped   : CleanupError: p1 cleanup blew up
+full chain: ['CleanupError: p1 cleanup blew up', 'GeneratorExit: ']
+all closed: [True, True, True]
+```
+
+All three closed. **One** failure came out. The other two are not suppressed and not chained onto
+it — they are gone, and nothing anywhere says so.
+
+The mechanism is a few lines of `contextlib`:
+
+```python
+def _fix_exception_context(new_exc, old_exc):
+    while 1:
+        exc_context = new_exc.__context__
+        if exc_context is None or exc_context is old_exc:
+            # Context is already set correctly (see issue 20317)
+            return
+        ...
+```
+
+The stack *repairs* an exception chain that already exists; it does not build one. It walks the new
+exception's `__context__` looking for the place to splice the old one on, and gives up the moment
+it reaches a `None`. Here it reaches one immediately: the escaping `CleanupError` was raised from a
+`finally` running under the `GeneratorExit` that `aclose()` threw in, so its `__context__` is that
+`GeneratorExit` — whose own context is `None`. Walk over, nothing spliced, earlier failure gone.
+
+The transferable lesson, for any teardown that closes several things: *"every cleanup ran"* and
+*"you saw every cleanup failure"* are different guarantees, and a stack gives you the first one.
+
+---
+
+### 11.6 What `return_exceptions=True` does not bound
+
+Phase 1 finishes with `await asyncio.gather(*pulls, return_exceptions=True)`, and it's natural to
+read that flag as drawing a line at `Exception` — collecting the ordinary failures, letting the
+serious ones through. It draws no such line:
+
+```
+Exception    : gather returned [ValueError('v')]
+BaseException: gather returned [Boom('b')]
+KeyboardInterrupt: gather RAISED CancelledError | task.exception() -> KeyboardInterrupt
+escaped asyncio.run: KeyboardInterrupt
+```
+
+`gather` stores a `BaseException` as readily as a `ValueError`. What keeps `KeyboardInterrupt` and
+`SystemExit` out of that list is a different mechanism sitting one layer down — `Task`'s step
+handler, which special-cases exactly those two, storing them *and* re-raising into the loop (shown
+here in the pure-Python `asyncio/tasks.py`; on a default build it's the `_asyncio` accelerator that
+runs, carrying the same special case):
+
+```python
+except (KeyboardInterrupt, SystemExit) as exc:
+    super().set_exception(exc)
+    raise
+except BaseException as exc:
+    super().set_exception(exc)
+```
+
+The run comes apart before the teardown gets any further, which is the outcome you want. But it is
+worth knowing which line of code is producing it, because the observable ("Ctrl-C isn't swallowed
+by the gather") is true while the obvious explanation for it ("`return_exceptions=True` only
+catches `Exception`") is false. Anyone who later "tightens" that gather on the strength of the
+explanation will be adjusting a flag that was never the thing drawing that line.
+
+
+---
+
+---
+
+### 11.7 The report's one gap today
 
 One caveat on the channel §11.4 just called the only one this failure has: as the library stands
 today, the report does not always happen.[^asettle-report]
@@ -758,7 +888,7 @@ does not always return. A further `cancel()` arriving while that gather is open 
 ([gh-32684](https://github.com/python/cpython/issues/32684)) — and `return_exceptions=True` does not
 prevent it, because that flag governs what the *children* raise, not what is done to the gather
 itself. Which is
-[§5.6](./part-1-the-derivation.md#56-one-last-trap-what-return_exceptionstrue-does-not-bound)'s
+[§11.6](#116-what-return_exceptionstrue-does-not-bound)'s
 lesson arriving in a second costume: the flag is not the thing drawing the line you think it is.
 Leaving by that route skips the reporting entirely, and the failure is dropped.
 

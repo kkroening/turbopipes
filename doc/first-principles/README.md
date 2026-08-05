@@ -39,15 +39,13 @@ directory.
 | 4.1 | how far a source can run ahead of a dawdling consumer | [`04_1_bounded_source.py`](04_1_bounded_source.py) |
 | 4.2 | what `gather`, `TaskGroup` and `aparallel` do to a failing item's peers | [`04_2_peer_failure.py`](04_2_peer_failure.py) |
 | 4.3 | what leaving an `aparallel` loop early under `aclosing` does today | [`04_3_early_exit_today.py`](04_3_early_exit_today.py) |
-| 5 | the naive merge, closed source-by-source, with sources mid-pull | [`05_naive_merge_teardown.py`](05_naive_merge_teardown.py) |
-| 5.1 | `aclose()` on a generator suspended inside its own body | [`05_1_aclose_running.py`](05_1_aclose_running.py) |
-| 5.1 | the consumer's exception, lost on the way out of the cleanup | [`05_1_lost_exception.py`](05_1_lost_exception.py) |
-| 5.2 | cancellation reaches what `aclose()` cannot | [`05_2_cancel_reaches.py`](05_2_cancel_reaches.py) |
-| 5.2 | the two-phase teardown, hand-rolled and via `aselect` | [`05_2_two_phase.py`](05_2_two_phase.py) |
-| 5.3 | `AsyncExitStack` runs every callback and keeps one failure | [`05_3_exit_stack.py`](05_3_exit_stack.py) |
-| 5.4 | PEP 525 converts a `StopAsyncIteration` raised from the body | [`05_4_stopasynciteration.py`](05_4_stopasynciteration.py) |
+| 5.1 | round-robin delivery vs. arming every source at once | [`05_round_robin_stall.py`](05_round_robin_stall.py) |
+| 5.2 | the naive merge, closed source-by-source, with sources mid-pull | [`05_naive_merge_teardown.py`](05_naive_merge_teardown.py) |
+| 5.3 | `aclose()` on a generator suspended inside its own body | [`05_1_aclose_running.py`](05_1_aclose_running.py) |
+| 5.3 | the consumer's exception, lost on the way out of the cleanup | [`05_1_lost_exception.py`](05_1_lost_exception.py) |
+| 5.4 | cancellation reaches what `aclose()` cannot | [`05_2_cancel_reaches.py`](05_2_cancel_reaches.py) |
+| 5.4 | the two-phase teardown, hand-rolled and via `aselect` | [`05_2_two_phase.py`](05_2_two_phase.py) |
 | 5.5 | backpressure through the merge, re-arming after vs. before the yield | [`05_5_backpressure.py`](05_5_backpressure.py) |
-| 5.6 | `gather(return_exceptions=True)` vs. `Task`'s step handler | [`05_6_return_exceptions.py`](05_6_return_exceptions.py) |
 
 ## [Part II](./part-2-taking-it-apart.md) — taking it apart
 
@@ -55,6 +53,7 @@ directory.
 | --- | --- | --- |
 | 7.1 | a failing source through `amerge` alone, and behind `ataskify` | [`07_1_amerge_alone.py`](07_1_amerge_alone.py) |
 | 7.2 | service gap and reproducibility: `set` order vs. least-recently-served | [`07_2_round_robin.py`](07_2_round_robin.py) |
+| 7.3 | PEP 525 converts a `StopAsyncIteration` raised from the body | [`05_4_stopasynciteration.py`](05_4_stopasynciteration.py) |
 | 8.1 | awaiting the pull vs. waiting on it | [`08_1_wait_not_await.py`](08_1_wait_not_await.py) |
 | 8.2 | head-of-line blocking from yielding a pull before it completes, and the backpressure that survives it | [`08_2_head_of_line.py`](08_2_head_of_line.py) |
 | 9 | `atag` outside vs. inside `ataskify`, in the failure case | [`09_tag_placement.py`](09_tag_placement.py) |
@@ -65,7 +64,9 @@ directory.
 | 11.2 | settling nested inside the closes vs. outside them | [`11_2_nesting.py`](11_2_nesting.py) |
 | 11.3 | a sequential close loop, nested `aclosing`, and `aclosing_all` | [`11_3_aclosing_all.py`](11_3_aclosing_all.py) |
 | 11.4 | a cleanup failure reported with and without a `label` | [`11_4_label_seam.py`](11_4_label_seam.py) |
-| 11.5 | the cleanup-failure report dropped by a second cancellation | [`11_5_report_gap_today.py`](11_5_report_gap_today.py) |
+| 11.5 | `AsyncExitStack` runs every callback and keeps one failure | [`05_3_exit_stack.py`](05_3_exit_stack.py) |
+| 11.6 | `gather(return_exceptions=True)` vs. `Task`'s step handler | [`05_6_return_exceptions.py`](05_6_return_exceptions.py) |
+| 11.7 | the cleanup-failure report dropped by a second cancellation | [`11_5_report_gap_today.py`](11_5_report_gap_today.py) |
 
 [Part III](./part-3-the-api-in-hindsight.md) quotes no measurements of its own — it attributes the
 ones above to the layers that produce them.
