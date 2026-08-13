@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+##
+##  scripts/render_issues: regenerate the issue tracker's index
+##  (`docs/issues/README.md`) from the per-issue files.
+##
+##  Lives in `scripts/` and finds the tracker at `<repo-root>/docs/issues/`
+##  (the repo root is this script's parent directory's parent).
+##
+##  Adapted from a private internal template, and **maintained here** — this
+##  repo is public and cannot reach that template, so this copy is the source
+##  of truth for turbopipes.  The one deliberate divergence is `_GUIDE_URL`
+##  below, which points at the in-repo guide instead of an unreachable one.
+##
+##  The index is pure derived data — every cell (number, title, kind, status)
+##  already lives in an issue file (`NNNN.md`) at a deterministic position:
+##
+##    - the title is the `# NNNN — <title>` heading (line 1);
+##    - the status and kind are fields of the `**Status:** … · **Kind:** …`
+##      header line just below it.
+##
+##  So the index is never hand-maintained: after adding, retitling, or
+##  restatusing an issue, run this to rewrite `docs/issues/README.md`.
+##  Idempotent — running it when nothing changed leaves the file byte-identical.
+##
+##  Usage:
+##    render_issues            regenerate docs/issues/README.md in place
+##    render_issues --check    exit nonzero with a diff if it's stale; no write
+##    render_issues --help
+##
+##  A malformed issue file (unparseable heading, or a Status/Kind the guide
+##  doesn't define) fails the render, so this doubles as the tracker's format
+##  linter.
+##
+set -euo pipefail
+
+# Assign then mark readonly on a separate line: `readonly VAR="$(...)"` would
+# mask the command substitution's exit status from `set -e`.
+_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly _ROOT_DIR
+readonly _ISSUES_DIR="${_ROOT_DIR}/docs/issues"
+readonly _README="${_ISSUES_DIR}/README.md"
+## Relative, so it resolves both on rendered GitHub and in a local clone. The
+## guide is vendored into this repo precisely so the tracker's landing page
+## never links somewhere a reader cannot follow.
+readonly _GUIDE_URL="../issue-tracking.md"
+
+## The vocabulary the guide defines (see the guide's Conventions). `Status`
+## also admits `Superseded by NNNN`, whose numeric tail is matched separately.
+readonly -a _VALID_KINDS=(Feature Enhancement Bug Papercut Discussion RFC)
+readonly -a _VALID_STATUSES=(Open "In progress" Resolved Rejected)
+
+_fail() {
+  ##
+  ## Print a `printf`-style error to stderr and return failure. Callers
+  ## propagate it (`|| return 1`); only the top-level `_main` decides to stop —
+  ## so a malformed issue fails the whole render rather than emitting a bad row.
+  ##
+  local -r fmt="$1"
+  shift
+  printf "render_issues: ${fmt}\n" "$@" >&2
+  return 1
+}
+
+_is_member() {
+  ##
+  ## Succeed if the first argument equals any of the rest.
+  ##
+  local -r value="$1"
+  local candidate
+  for candidate in "${@:2}"; do
+    if [[ "${candidate}" == "${value}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+_extract_header_field() {
+  ##
+  ## Print the value of the `**<label>:**` field from an issue's header line
+  ## (the `**Status:** … · **Kind:** … · …` line), or nothing if absent.
+  ##
+  ## Pure parameter expansion: drop everything up to and including the label,
+  ## then everything from the next ` · ` field separator onward.
+  ##
+  local -r header="$1"
+  local -r label="$2"
+  local value=""
+  if [[ "${header}" == *"**${label}:** "* ]]; then
+    value="${header#*"**${label}:** "}"
+    value="${value%% · *}"
+  fi
+  printf '%s' "${value}"
+}
+
+_validate_kind() {
+  ##
+  ## Fail unless <kind> is one the guide defines.
+  ##
+  local -r file="$1"
+  local -r kind="$2"
+  if ! _is_member "${kind}" "${_VALID_KINDS[@]}"; then
+    _fail "%s: unknown Kind '%s' (expected one of: %s)" \
+      "${file}" "${kind}" "${_VALID_KINDS[*]}"
+  fi
+}
+
+_validate_status() {
+  ##
+  ## Fail unless <status> is one the guide defines (a fixed value, or the
+  ## variable `Superseded by NNNN`).
+  ##
+  local -r file="$1"
+  local -r status="$2"
+  if ! _is_member "${status}" "${_VALID_STATUSES[@]}" \
+    && [[ ! "${status}" =~ ^Superseded\ by\ [0-9]{4}$ ]]; then
+    _fail "%s: unknown Status '%s' (expected one of: %s, or 'Superseded by NNNN')" \
+      "${file}" "${status}" "${_VALID_STATUSES[*]}"
+  fi
+}
+
+_parse_issue() {
+  ##
+  ## Read one issue file and print a tab-separated `number<TAB>kind<TAB>status<TAB>title`
+  ## row. Fails if the heading or Status/Kind can't be parsed or aren't valid.
+  ##
+  local -r file="$1"
+  local -r filename="${file##*/}"
+  local -r number="${filename%.md}"
+
+  # Read the file once: line 1 is the heading, then the `**Status:** … · **Kind:**
+  # …` header. The header may be a single line, or -- per the hover-title
+  # convention -- soft-wrapped across several lines: the `**Status:**` line
+  # followed by `·`-led continuation lines, ending at the first blank line. Join
+  # those into one logical header, mirroring how Markdown renders the wrapped
+  # form as a single line, so field extraction below sees `Status` and `Kind`
+  # regardless of wrapping. (No grep subprocess per issue; CRLF is tolerated.)
+  local heading="" header=""
+  {
+    IFS= read -r heading || true
+    local line
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      line="${line%$'\r'}"
+      if [[ -n "${header}" ]]; then
+        # End the header paragraph at the first blank line -- matching
+        # whitespace-only too, so a separator line with stray spaces/tabs can't
+        # swallow the following blockquote into the header.
+        [[ "${line}" =~ ^[[:space:]]*$ ]] && break
+        header+=" ${line}"
+      elif [[ "${line}" == '**Status:**'* ]]; then
+        header="${line}"
+      fi
+    done
+  } < "${file}"
+  heading="${heading%$'\r'}"
+
+  local -r prefix="# ${number} — "
+  if [[ "${heading}" != "${prefix}"* ]]; then
+    _fail "%s: line 1 must be '# %s — <title>', got: %s" "${file}" "${number}" "${heading}"
+    return 1
+  fi
+  local -r title="${heading#"${prefix}"}"
+
+  if [[ -z "${header}" ]]; then
+    _fail "%s: no '**Status:** …' header line found" "${file}"
+    return 1
+  fi
+
+  local -r kind="$(_extract_header_field "${header}" Kind)"
+  # A status may carry a trailing " (note)" annotation — e.g. "In progress
+  # (implemented in #12)". The index shows the bare status, and validation
+  # applies to it; strip from the first " (" onward.
+  local -r status_field="$(_extract_header_field "${header}" Status)"
+  local -r status="${status_field%% (*}"
+  _validate_kind "${file}" "${kind}" || return 1
+  _validate_status "${file}" "${status}" || return 1
+
+  printf '%s\t%s\t%s\t%s\n' "${number}" "${kind}" "${status}" "${title}"
+}
+
+_render() {
+  ##
+  ## Print the full README.md to stdout: the preamble, then the index — a table
+  ## of the issues newest-first (descending by number), or a placeholder when
+  ## there are none.
+  ##
+  local -a files=()
+  local f
+  shopt -s nullglob
+  for f in "${_ISSUES_DIR}"/[0-9][0-9][0-9][0-9].md; do
+    files+=("${f}")
+  done
+  shopt -u nullglob
+
+  printf '# Issues\n\n'
+  printf 'The in-repo issue tracker: one Markdown file per issue, numbered `NNNN.md`.\n'
+  printf 'Conventions and how to write a good issue: **[the issue tracker guide](%s)**.\n\n' "${_GUIDE_URL}"
+  printf '## Index\n\n'
+
+  if ((${#files[@]} == 0)); then
+    printf '_(no issues yet)_\n'
+  else
+    printf '| # | Title | Kind | Status |\n'
+    printf '|---|---|---|---|\n'
+
+    # The glob is ascending; walk it in reverse so the newest issue is listed first.
+    local i row number kind status title
+    for ((i = ${#files[@]} - 1; i >= 0; i--)); do
+      row="$(_parse_issue "${files[i]}")" || return 1
+      IFS=$'\t' read -r number kind status title <<< "${row}"
+      title="${title//|/\\|}" # escape pipes so a title can't break the table
+      printf '| [%s](%s.md) | %s | %s | %s |\n' "${number}" "${number}" "${title}" "${kind}" "${status}"
+    done
+  fi
+}
+
+_show_usage() {
+  cat >&2 << 'EOF'
+Usage: render_issues [--check]
+
+Regenerate the issue tracker's index (docs/issues/README.md) from the issue files.
+
+  (no args)   Rewrite README.md in place.
+  --check     Exit nonzero with a diff if README.md is out of date; write nothing.
+  -h, --help  Show this help.
+EOF
+}
+
+_main() {
+  local check=0
+  while (($#)); do
+    case "$1" in
+      -h | --help)
+        _show_usage
+        return 0
+        ;;
+      --check)
+        check=1
+        shift
+        ;;
+      *)
+        _fail "unrecognized argument: %s (try --help)" "$1"
+        return 1
+        ;;
+    esac
+  done
+
+  local rendered
+  rendered="$(_render)" || return 1
+
+  if ((check)); then
+    if [[ ! -f "${_README}" ]]; then
+      _fail "%s does not exist — run 'scripts/render_issues' to generate it" "${_README}"
+      return 1
+    fi
+    if diff -u -L old -L new \
+      "${_README}" <(printf '%s\n' "${rendered}") >&2; then
+      printf 'render_issues: README.md is up to date.\n' >&2
+    else
+      _fail "README.md is out of date — run 'scripts/render_issues' to regenerate it"
+      return 1
+    fi
+  else
+    mkdir -p "${_ISSUES_DIR}" # bootstrap a repo that has no docs/issues/ yet
+    printf '%s\n' "${rendered}" > "${_README}"
+    printf 'render_issues: wrote %s\n' "${_README}" >&2
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  _main "$@"
+fi
