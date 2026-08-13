@@ -226,6 +226,15 @@ up what the layering costs. Every measurement it quotes ships with the script th
 
 #### [👉 Read: Deriving Turbopipes from First Principles (Why Async is Harder Than It Looks)](./doc/first-principles.md)
 
+### Where are the issues?
+
+In the repo, not in GitHub Issues: one Markdown file per issue under
+[`docs/issues/`](./docs/issues/), with a generated index. That keeps a bug
+report or a design question reviewable and diffable alongside the code it
+describes, and it arrives with every clone.
+
+[Conventions and how to write a good one](./docs/issue-tracking.md).
+
 ### Why are the functions prefixed with `a`? (e.g. `aparallel` vs `parallel`)
 
 A common convention in the land of Python async is to distinguish the async generator/iterator variants of methods with `a`, such as `aclose` vs `close`, `contextlib.aclosing` vs `contextlib.closing`, etc.

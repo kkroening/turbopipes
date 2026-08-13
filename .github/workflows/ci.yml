@@ -45,3 +45,10 @@ jobs:
             -p no:only \
             --strict-markers \
             -vv
+  render-issues:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      # No `init` step: `render_issues` is plain bash with no project deps.
+      - name: Check the issue index is current
+        run: ./scripts/render_issues --check
