@@ -9,3 +9,11 @@ settings::pre_release() {
   poetry version "${_arg__new_version}"
   git add pyproject.toml
 }
+
+settings::post_release() {
+  base::log_info "Fast-forwarding the latest branch..."
+  git fetch . HEAD:latest
+  if ((_arg__push == 1)); then
+    git push origin latest
+  fi
+}

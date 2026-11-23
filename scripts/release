@@ -204,7 +204,13 @@ _generate_changelog_text() {
       | tr '\.+ ' '-' \
       | tr '[:upper:]' '[:lower:]'
   )"
-  echo -e "\n## <span id=\"${span_id}\" /> [${_arg__new_version}](${base_url}/compare/${_arg__old_version}...${_arg__new_version}) - ${today}"
+  printf '\n## <span id="%s" /> [%s](%s/compare/%s...%s) - %s\n' \
+    "${span_id}" \
+    "${_arg__new_version}" \
+    "${base_url}" \
+    "${_arg__old_version}" \
+    "${_arg__new_version}" \
+    "${today}"
 
   local changelog
   if declare -F settings::gen_release_changelog > /dev/null; then
@@ -220,7 +226,7 @@ _generate_changelog_text() {
     )" || return
   fi
 
-  echo -e "\n### Changes\n\n${changelog}"
+  printf '\n### Changes\n\n%s\n' "${changelog}"
 }
 
 _update_changelog() {
@@ -233,7 +239,11 @@ _update_changelog() {
     _generate_changelog_text
   )"
   changelog="$(cat CHANGELOG.md)"
-  echo "${changelog/"${pattern}"/"${newtext}"}" > CHANGELOG.md
+  printf '%s%s%s\n' \
+    "${changelog%%"${pattern}"*}" \
+    "${newtext}" \
+    "${changelog#*"${pattern}"}" \
+    > CHANGELOG.md
 
   git add CHANGELOG.md
 }

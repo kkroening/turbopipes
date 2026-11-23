@@ -10,7 +10,7 @@ base::abspath() {
   arg1="$1" python -c "import os; print(os.path.realpath(os.environ['arg1']))"
 }
 
-BASE__ROOT_DIR="$(base::abspath "$(dirname "${BASH_SOURCE}")/..")"
+BASE__ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BASE__SCRIPTS_DIR="${BASE__ROOT_DIR}/scripts"
 
 BASE__COLOR_LIGHT_GREEN='\033[1;32m'
