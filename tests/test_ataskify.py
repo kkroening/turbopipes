@@ -22,10 +22,9 @@ async def test_ataskify__yields_completed_tasks():
     assert actual == [0, 1, 2]
 
 
-async def test_ataskify__source_cancellation_comes_out_as_a_cancelled_task():
-    # A source raising `CancelledError` of its own isn't the consumer being cancelled:
-    # the iteration carries on, and the task is cancelled rather than failed, which is
-    # what a consumer catching `Exception` has to know.
+async def test_ataskify__source_raising_cancelled_error_comes_out_as_a_cancelled_task():
+    # A source raising `CancelledError` of its own comes out as a cancelled task, rather
+    # than as an exception ending the iteration.
     async def source():
         yield 'first'
         raise asyncio.CancelledError()

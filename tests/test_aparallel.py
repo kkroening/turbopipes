@@ -117,3 +117,26 @@ async def test_aparallel__task_failure_does_not_cancel_peers():
     # cancelled
     assert sorted(tasks_completed) == [0, 1, 3, 4]
     assert tasks_failed == [2]
+
+
+async def test_aparallel__task_raising_cancelled_error_comes_out_cancelled():
+    async def mock_task(index: int) -> int:
+        await asyncio.sleep(0)
+        if index == 1:
+            raise asyncio.CancelledError()
+        return index * 2
+
+    async def mock_generator():
+        for index in range(3):
+            yield mock_task(index)
+
+    results = []
+    cancelled = 0
+    async for task in turbopipes.aparallel(mock_generator(), max_concurrent=3):
+        if task.cancelled():
+            cancelled += 1
+        else:
+            results.append(await task)
+
+    assert sorted(results) == [0, 4]
+    assert cancelled == 1

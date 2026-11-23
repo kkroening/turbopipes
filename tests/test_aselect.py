@@ -151,7 +151,7 @@ async def test_aselect__source_failure_does_not_cancel_peers():
     assert errors == [('bad', 'Source failed')]
 
 
-async def test_aselect__source_cancellation_does_not_cancel_peers():
+async def test_aselect__source_raising_cancelled_error_does_not_cancel_peers():
     async def good(count):
         for index in range(count):
             await asyncio.sleep(0)
