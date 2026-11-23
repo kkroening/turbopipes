@@ -14,7 +14,7 @@ Usage:
 
 Options:
   -B, --ignore-branch
-      Don't require being on master branch.
+      Don't require being on the default branch.
   -C, --no-changelog
       Don't modify CHANGELOG.md.
   -D, --ignore-dirty
@@ -46,9 +46,9 @@ by determining the current version (according to \`git describe ...\`) and then
 the minor version number is increased (e.g. \`1.2.3\` -> \`1.3.0\`), so long as
 the current version is a valid semantic version identifier.
 
-The script refuses to do anything if not on master, if the local workarea is
-dirty, or if the changelog is missing, unless overridden using the appropriate
-arguments (e.g. -B).
+The script refuses to do anything if not on the default branch, if the local
+workarea is dirty, or if the changelog is missing, unless overridden using the
+appropriate arguments (e.g. -B).
 EOF
 }
 
@@ -114,8 +114,9 @@ _parse_args() {
 }
 
 _get_version_info() {
-  _arg__old_version="$(git describe --tags --abbrev=0)" \
-    || base::abort "Failed to detect version info; aborting."
+  # No tag yet means this is the first release, which needs `-V`.
+  _arg__old_version="$(git describe --tags --abbrev=0 2> /dev/null)" \
+    || _arg__old_version=""
   if [[ -n "${_arg__new_version:-}" ]]; then
     true
   elif [[ "${_arg__old_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
@@ -133,12 +134,18 @@ _check_branch() {
   local branch
   branch="$(git symbolic-ref --short HEAD)" \
     || base::abort "Failed to determine current branch name; aborting."
-  if [[ "${branch}" == "master" ]]; then
+  local default_branch
+  default_branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2> /dev/null)" \
+    || ((_arg__ignore_branch == 1)) \
+    || base::abort 'Failed to determine the default branch; try `git remote set-head origin --auto`.'
+  default_branch="${default_branch#origin/}"
+
+  if [[ "${branch}" == "${default_branch}" ]]; then
     :
   elif ((_arg__ignore_branch == 1)); then
-    base::log_warning "Not on master branch; current branch: ${branch}"
+    base::log_warning "Not on ${default_branch:-the default} branch; current branch: ${branch}"
   else
-    base::log_error 'Must be on master branch, or specify `-B` or `--ignore-branch`.'
+    base::log_error "Must be on ${default_branch} branch, or specify \`-B\` or \`--ignore-branch\`."
     exit 1
   fi
 }
@@ -204,12 +211,16 @@ _generate_changelog_text() {
       | tr '\.+ ' '-' \
       | tr '[:upper:]' '[:lower:]'
   )"
-  printf '\n## <span id="%s" /> [%s](%s/compare/%s...%s) - %s\n' \
+  local link
+  if [[ -n "${_arg__old_version}" ]]; then
+    link="${base_url}/compare/${_arg__old_version}...${_arg__new_version}"
+  else
+    link="${base_url}/releases/tag/${_arg__new_version}"
+  fi
+  printf '\n## <span id="%s" /> [%s](%s) - %s\n' \
     "${span_id}" \
     "${_arg__new_version}" \
-    "${base_url}" \
-    "${_arg__old_version}" \
-    "${_arg__new_version}" \
+    "${link}" \
     "${today}"
 
   local changelog
@@ -222,7 +233,7 @@ _generate_changelog_text() {
       "${BASE__SCRIPTS_DIR}"/changelog \
         --markdown \
         --no-header \
-        "${_arg__old_version}"
+        "${_arg__old_version:-$(git rev-list --max-parents=0 HEAD)}"
     )" || return
   fi
 
@@ -232,18 +243,14 @@ _generate_changelog_text() {
 _update_changelog() {
   base::log_info "Updating changelog..."
 
-  local changelog newtext pattern
-  pattern='## [Unreleased]'
-  newtext="$(
-    echo "${pattern}"
-    _generate_changelog_text
-  )"
-  changelog="$(cat CHANGELOG.md)"
-  printf '%s%s%s\n' \
-    "${changelog%%"${pattern}"*}" \
-    "${newtext}" \
-    "${changelog#*"${pattern}"}" \
-    > CHANGELOG.md
+  local newtext
+  # Match the heading as a whole line: the text may mention it elsewhere.
+  newtext="$(_generate_changelog_text)" || return
+  NEWTEXT="${newtext}" awk '
+    !done && $0 == "## [Unreleased]" { print; print ENVIRON["NEWTEXT"]; done = 1; next }
+    { print }
+  ' CHANGELOG.md > CHANGELOG.md.new
+  mv CHANGELOG.md.new CHANGELOG.md
 
   git add CHANGELOG.md
 }

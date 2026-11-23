@@ -30,7 +30,7 @@ base::_log() {
 }
 
 base::log_debug() {
-  [[ -z "${SKOPS__DEBUG:-}" ]] \
+  [[ -z "${BASE__DEBUG:-}" ]] \
     || prefix='[DEBUG] ' base::_log "$@"
 }
 
