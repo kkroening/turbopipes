@@ -117,3 +117,55 @@ async def test_aparallel__task_failure_does_not_cancel_peers():
     # cancelled
     assert sorted(tasks_completed) == [0, 1, 3, 4]
     assert tasks_failed == [2]
+
+
+async def test_aparallel__last_tasks_come_out_finished_in_completion_order():
+    # Once the input runs out, the tasks still running come out the same way as the
+    # rest: finished, and in the order they finish, not the order they went in.
+    # `slow` can't finish until `fast` has come out.
+    release = asyncio.Event()
+
+    async def slow() -> str:
+        await release.wait()
+        return 'slow'
+
+    async def fast() -> str:
+        return 'fast'
+
+    async def mock_generator():
+        yield slow()
+        yield fast()
+
+    finished = []
+    async for task in turbopipes.aparallel(mock_generator(), max_concurrent=5):
+        assert task.done()
+        finished.append(task.result())
+        release.set()
+
+    assert finished == ['fast', 'slow']
+
+
+async def test_aparallel__task_raising_cancelled_error_comes_out_cancelled():
+    async def mock_task(index: int) -> int:
+        await asyncio.sleep(0)
+        if index == 1:
+            # Later than the others, so it's still running when the input runs out.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError()
+        return index * 2
+
+    async def mock_generator():
+        for index in range(3):
+            yield mock_task(index)
+
+    results = []
+    cancelled = 0
+    async for task in turbopipes.aparallel(mock_generator(), max_concurrent=5):
+        if task.cancelled():
+            cancelled += 1
+        else:
+            results.append(await task)
+
+    assert sorted(results) == [0, 4]
+    assert cancelled == 1
