@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+##
+## `scripts/release`: Perform release process: update changelog,
+## commit/tag/push, etc.
+##
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE}")/base.sh"
+
+_show_usage() {
+  cat >&2 << EOF
+
+Usage:
+    scripts/release [<-V|--version> <version>] [options...]
+
+Options:
+  -B, --ignore-branch
+      Don't require being on master branch.
+  -C, --no-changelog
+      Don't modify CHANGELOG.md.
+  -D, --ignore-dirty
+      Allow workarea to be "dirty" - i.e. having unstaged/uncommitted changes.
+  -h, --help
+      Show help/usage.
+  -P, --no-push
+      Avoid running \`git push\`.
+  -q, --quiet
+      Disable interactive prompt(s). If input is required, defaults will be
+      used, or an error will be raised.
+  -V version, --version version
+      The version identifier to use - typically in semantic version format,
+      e.g. \`1.2.3\` (though development builds may use different formats,
+      such as \`1.2.3-dev1\`).
+EOF
+}
+
+_show_help() {
+  base::log_info "scripts/release: Perform release process."
+  _show_usage
+  cat >&2 << EOF
+
+This script performs the release process by updating CHANGELOG.md, committing,
+tagging, and pushing based on the specified version identifier.
+
+If no version identifier is specified, the version is computed automatically
+by determining the current version (according to \`git describe ...\`) and then
+the minor version number is increased (e.g. \`1.2.3\` -> \`1.3.0\`), so long as
+the current version is a valid semantic version identifier.
+
+The script refuses to do anything if not on master, if the local workarea is
+dirty, or if the changelog is missing, unless overridden using the appropriate
+arguments (e.g. -B).
+EOF
+}
+
+_arg__ignore_branch=0
+_arg__ignore_dirty=0
+_arg__new_version=""
+_arg__old_version=""
+_arg__push=1
+_arg__quiet=0
+_arg__update_changelog=1
+
+# Note: Ideally, these args would be stored as an associative array, but not
+# everyone has a reasonably up to date version of bash installed, and thus
+# doing so may cause compatibility issues - hence using simple/dumb ordinary
+# shell variables.
+
+_parse_args() {
+  while (("$#")); do
+    case "$1" in
+      -B | --ignore-branch)
+        _arg__ignore_branch=1
+        shift
+        ;;
+      -C | --no-changelog)
+        _arg__update_changelog=0
+        shift
+        ;;
+      -D | --ignore-dirty)
+        _arg__ignore_dirty=1
+        shift
+        ;;
+      -h | --help)
+        _show_help
+        exit 1
+        ;;
+      -P | --no-push)
+        _arg__push=0
+        shift
+        ;;
+      -q | --quiet)
+        _arg__quiet=1
+        shift
+        ;;
+      -V | --version)
+        shift
+        _arg__new_version="$1"
+        shift
+        ;;
+      *)
+        base::log_error "Unrecognized argument: $1"
+        _show_usage
+        exit 1
+        ;;
+    esac
+  done
+
+  base::log_debug "_arg__ignore_branch=%d" "${_arg__ignore_branch}"
+  base::log_debug "_arg__ignore_dirty=%d" "${_arg__ignore_dirty}"
+  base::log_debug "_arg__new_version=%s" "${_arg__new_version}"
+  base::log_debug "_arg__push=%d" "${_arg__push}"
+  base::log_debug "_arg__quiet=%d" "${_arg__quiet}"
+  base::log_debug "_arg__update_changelog=%d" "${_arg__update_changelog}"
+}
+
+_get_version_info() {
+  _arg__old_version="$(git describe --tags --abbrev=0)" \
+    || base::abort "Failed to detect version info; aborting."
+  if [[ -n "${_arg__new_version:-}" ]]; then
+    true
+  elif [[ "${_arg__old_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    major=$((BASH_REMATCH[1]))
+    minor=$((BASH_REMATCH[2] + 1))
+    patch=0
+    _arg__new_version="${major}.${minor}.${patch}"
+  else
+    base::log_error 'A version identifier must be specified via `-V` or `--version`.'
+    exit 1
+  fi
+}
+
+_check_branch() {
+  local branch
+  branch="$(git symbolic-ref --short HEAD)" \
+    || base::abort "Failed to determine current branch name; aborting."
+  if [[ "${branch}" == "master" ]]; then
+    :
+  elif ((_arg__ignore_branch == 1)); then
+    base::log_warning "Not on master branch; current branch: ${branch}"
+  else
+    base::log_error 'Must be on master branch, or specify `-B` or `--ignore-branch`.'
+    exit 1
+  fi
+}
+
+_check_not_dirty() {
+  local git_status
+  git_status="$(git status --porcelain --untracked-files=no)" \
+    || base::abort "Failed to check repo dirtiness status; aborting."
+  if [[ -z "${git_status}" ]]; then
+    :
+  elif ((_arg__ignore_dirty == 1)); then
+    base::log_warning "Workarea is dirty; unstaged changes:\n%s" "${git_status}"
+  else
+    base::log_error 'You have unstaged changes.'
+    base::log_error 'Please commit or stash them, or pass `-D` or `--ignore-dirty`.'
+    exit 1
+  fi
+}
+
+_check_changelog() {
+  if grep '^## \[Unreleased\]$' CHANGELOG.md --quiet; then
+    :
+  else
+    base::log_error 'CHANGELOG.md must contain an `[Unreleased]` section with release notes, or specify `-C` or `--no-changelog`.'
+    exit 1
+  fi
+}
+
+_check_version_tag() {
+  base::log_info "Checking version tag..."
+  git fetch --tags
+  if [[ -n "$(git tag -l "${_arg__new_version}")" ]]; then
+    base::abort "Git tag ${_arg__new_version} already exists; aborting."
+  fi
+}
+
+_check() {
+  _check_branch
+  if ((_arg__update_changelog == 1)); then
+    _check_changelog
+  fi
+  _check_not_dirty
+  #_check_version_tag
+}
+
+_generate_changelog_text() {
+  #
+  # `_generate_changelog_text`: Generate the text to be inserted into
+  # `CHANGELOG.md` immediately after the `[Unreleased]` section marker.
+  #
+
+  local today
+  today="$(date +%Y-%m-%d)" \
+    || base::abort
+
+  local base_url
+  base_url="$(base::get_repo_https_url)" \
+    || base::abort "Unable to determine repo URL; aborting."
+
+  local span_id
+  span_id="$(
+    echo "${_arg__new_version}" \
+      | tr '\.+ ' '-' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  echo -e "\n## <span id=\"${span_id}\" /> [${_arg__new_version}](${base_url}/compare/${_arg__old_version}...${_arg__new_version}) - ${today}"
+
+  local changelog
+  if declare -F settings::gen_release_changelog > /dev/null; then
+    base::show_banner 'Calling `settings::gen_release_changelog` hook...'
+    changelog="$(settings::gen_release_changelog)" \
+      || return
+  else
+    changelog="$(
+      "${BASE__SCRIPTS_DIR}"/changelog \
+        --markdown \
+        --no-header \
+        "${_arg__old_version}"
+    )" || return
+  fi
+
+  echo -e "\n### Changes\n\n${changelog}"
+}
+
+_update_changelog() {
+  base::log_info "Updating changelog..."
+
+  local changelog newtext pattern
+  pattern='## [Unreleased]'
+  newtext="$(
+    echo "${pattern}"
+    _generate_changelog_text
+  )"
+  changelog="$(cat CHANGELOG.md)"
+  echo "${changelog/"${pattern}"/"${newtext}"}" > CHANGELOG.md
+
+  git add CHANGELOG.md
+}
+
+_call_pre_release_hook() {
+  #
+  # `_call_pre_release_hook`: Calls the optional `settings::pre_release`
+  # customization if it's defined in `settings.sh`.
+  #
+  # Note: The hook function inherits all of the variables from this script,
+  # including the `_arg__*` variables and all of the various functions, for
+  # better or worse.  The hook function may choose to use these variables at
+  # its own risk of future breaking changes to the common `scripts/release`.
+  # It might be better in the future to have hooks be invoked in an isolated
+  # shell process instead, and then pass in only a specific set of arguments/
+  # parameters either as command-line arguments or via environment variables;
+  # but that's outside the scope of this initial implementation.
+  #
+
+  if declare -F settings::pre_release > /dev/null; then
+    base::show_banner 'Calling `settings::pre_release` hook...'
+    settings::pre_release
+  fi
+}
+
+_show_plan() {
+  base::show_banner "The following changes will be committed and tagged as \`${_arg__new_version}\`:"
+  git --no-pager diff --cached
+
+  if declare -F settings::plan_release > /dev/null; then
+    settings::plan_release
+  fi
+
+  if ((_arg__quiet == 0)); then
+    base::show_banner "Continue?"
+    base::log_info "Review the changes and edit CHANGELOG.md as desired."
+    read -p "Then press [Enter] to continue, or [^C] to abort. "
+
+    # Re-add CHANGELOG.md in case the user made changes
+    git add CHANGELOG.md
+  fi
+}
+
+_commit_tag_push() {
+  base::log_info "Committing and tagging..."
+  git commit -m "Release ${_arg__new_version}" --allow-empty
+  git tag "${_arg__new_version}"
+
+  if ((_arg__push == 1)); then
+    base::log_info "Pushing..."
+    git push -u origin HEAD "${_arg__new_version}"
+  fi
+}
+
+_call_post_release_hook() {
+  if declare -F settings::post_release > /dev/null; then
+    base::show_banner 'Calling `settings::post_release` hook...'
+    settings::post_release
+  fi
+}
+
+_apply() {
+  if ((_arg__update_changelog == 1)); then
+    _update_changelog
+  fi
+  _call_pre_release_hook
+  _show_plan
+  _commit_tag_push
+  _call_post_release_hook
+  _declare_victory
+}
+
+_declare_victory() {
+  base::show_banner "Released ${_arg__new_version}"
+  base::log_info "Done."
+}
+
+_main() {
+  cd "${BASE__ROOT_DIR}"
+  _parse_args "$@"
+  _get_version_info
+  _check
+  _apply
+}
+
+_main "$@"

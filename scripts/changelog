@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+##
+## `scripts/changelog`: Generate list of changes from the commit history.
+##
+##  Run `scripts/changelog --help` for more info.
+##
+
+set -euo pipefail
+. "$(dirname "${BASH_SOURCE}")/base.sh"
+
+_show_usage() {
+  cat >&2 << EOF
+Usage: scripts/changelog [start-ref] [end-ref] [options...]
+Options:
+  -m, --md, --markdown
+      Emit markdown output.
+  -s, --mrkdwn
+      Emit Slack-style 'mrkdwn' output.
+  -H, --no-header
+      Omit header line ("Commits from ...").
+EOF
+}
+
+_show_help() {
+  base::log_info "scripts/changelog: Generate changelog from git commit log."
+  _show_usage
+  cat >&2 << EOF
+
+This script generates a changelog by scraping the git commit log.
+EOF
+}
+
+_arg__output_header=1
+_arg__output_markdown=0
+_arg__output_slack_mrkdwn=0
+_arg__ref_end=""
+_arg__ref_start=""
+
+_parse_args() {
+  local arg_num=0
+  while (("$#")); do
+    case "$1" in
+      -m | --md | --markdown)
+        _arg__output_markdown=1
+        shift
+        ;;
+      -H | --no-header)
+        _arg__output_header=0
+        shift
+        ;;
+      -h | --help)
+        _show_help
+        exit 1
+        ;;
+      -s | --slack-mrkdwn)
+        _arg__output_slack_mrkdwn=1
+        shift
+        ;;
+      -*)
+        base::log_error "Unrecognized argument: $1"
+        _show_usage
+        exit 1
+        ;;
+      *)
+        if ((arg_num == 0)); then
+          _arg__ref_start="$1"
+        elif ((arg_num == 1)); then
+          _arg__ref_end="$1"
+        else
+          base::log_error "Unrecognized argument: $1"
+          _show_usage
+          exit 1
+        fi
+        arg_num=$((arg_num + 1))
+        shift
+        ;;
+    esac
+  done
+
+  base::log_debug "_arg__ref_end=%s" "${_arg__ref_end}"
+  base::log_debug "_arg__output_header=%d" "${_arg__output_header}"
+  base::log_debug "_arg__output_markdown=%d" "${_arg__output_markdown}"
+  base::log_debug "_arg__output_slack_mrkdwn=%d" "${_arg__output_slack_mrkdwn}"
+  base::log_debug "_arg__ref_start=%s" "${_arg__ref_start}"
+}
+
+_show_header() {
+  if ((_arg__output_header == 1)); then
+    printf "Commits from %s to %s:\n" "${ref_start_text}" "${ref_end_text}"
+  fi
+}
+
+_show_markdown() {
+  local base_url
+  base_url="$(base::get_repo_https_url)" \
+    || base::abort "Unable to determine repo URL; aborting."
+  local -r base_url_escaped="${base_url//\//\\/}"
+
+  echo "${commits[*]}" \
+    | sed 's/^[^ ][^ ]* /* /' \
+    | sed 's/(#\([0-9][0-9]*\))/([#\1]('"${base_url_escaped}"'\/pull\/\1))/'
+}
+
+_show_slack_mrkdwn() {
+  local base_url
+  base_url="$(base::get_repo_https_url)" \
+    || base::abort "Unable to determine repo URL; aborting."
+  local -r base_url_escaped="${base_url//\//\\/}"
+
+  _show_header
+  echo "${commits[*]}" \
+    | sed 's/^[^ ][^ ]* /• /' \
+    | sed 's/(#\([0-9][0-9]*\))/(<'"${base_url_escaped}"'\/pull\/\1|#\1>)/'
+}
+
+_show_plaintext() {
+  _show_header
+  echo "${commits[*]}" \
+    | sed 's/^[^ ][^ ]* / * /'
+}
+
+_main() {
+  _parse_args "$@"
+
+  if [[ -z "${_arg__ref_end}" ]]; then
+    _arg__ref_end="HEAD"
+  fi
+
+  if [[ -z "${_arg__ref_start}" ]]; then
+    local end_tag
+    end_tag="$(git describe --tags --abbrev=0)" \
+      || base::abort "Failed to determine latest tag; aborting."
+    _arg__ref_start="$(git describe --tags --abbrev=0 "${end_tag}^")" \
+      || base::abort "Failed to determine previous tag; aborting."
+  fi
+
+  local ref_start_text
+  ref_start_text="$(git describe --tags "${_arg__ref_start}")" \
+    || base::abort "Failed to describe starting ref; aborting."
+  local ref_end_text
+  ref_end_text="$(git describe --tags "${_arg__ref_end}")" \
+    || base::abort "Failed to describe ending ref; aborting."
+
+  IFS=$'\n' \
+    commits=($(git log "${_arg__ref_start}..${_arg__ref_end}" --oneline --no-decorate --reverse)) \
+    || base::abort "Failed to get commit log; aborting."
+
+  if ((_arg__output_markdown == 1)); then
+    _show_markdown
+  elif ((_arg__output_slack_mrkdwn == 1)); then
+    _show_slack_mrkdwn
+  else
+    _show_plaintext
+  fi
+}
+
+_main "$@"
