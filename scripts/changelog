@@ -135,10 +135,10 @@ _main() {
   fi
 
   local ref_start_text
-  ref_start_text="$(git describe --tags "${_arg__ref_start}")" \
+  ref_start_text="$(git describe --tags --always "${_arg__ref_start}")" \
     || base::abort "Failed to describe starting ref; aborting."
   local ref_end_text
-  ref_end_text="$(git describe --tags "${_arg__ref_end}")" \
+  ref_end_text="$(git describe --tags --always "${_arg__ref_end}")" \
     || base::abort "Failed to describe ending ref; aborting."
 
   IFS=$'\n' \
