@@ -115,7 +115,7 @@ base::get_repo_https_url() {
   #
   local url
   url="$(git config --get remote.origin.url)" || false
-  url="${url/#git@github.com:/https://github.com/}"
+  url="${url/#git@*github.com:/https://github.com/}" # also SSH host aliases
   url="${url/%.git/}"
   echo "${url}"
 }
