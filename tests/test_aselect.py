@@ -151,6 +151,31 @@ async def test_aselect__source_failure_does_not_cancel_peers():
     assert errors == [('bad', 'Source failed')]
 
 
+async def test_aselect__source_raising_cancelled_error_does_not_cancel_peers():
+    async def good(count):
+        for index in range(count):
+            await asyncio.sleep(0)
+            yield index * 2
+
+    async def cancelling():
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+        yield  # pragma: no cover
+
+    stream = turbopipes.aselect({'good': good(4), 'cancelling': cancelling()})
+    results = []
+    cancelled = []
+    async with contextlib.aclosing(stream):
+        async for key, task in stream:
+            if task.cancelled():
+                cancelled.append(key)
+            else:
+                results.append((key, await task))
+
+    assert results == [('good', 0), ('good', 2), ('good', 4), ('good', 6)]
+    assert cancelled == ['cancelling']
+
+
 async def test_aselect__backpressure_holds_back_a_fast_source():
     produced = []
 

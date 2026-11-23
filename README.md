@@ -102,6 +102,9 @@ pull is in flight for each of them, and none is re-armed until your loop comes b
 item—so a chatty source can't run away from a slow consumer. A source that runs dry drops out
 quietly; the merge itself ends when the last one does.
 
+One catch: a source that raises `CancelledError` of its own comes out as a cancelled task, which
+`except Exception` lets through, so check `task.cancelled()` first.
+
 The teardown is the part worth knowing about. When you walk away early, sources can be left
 suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
 closed—`aclose()` raises `RuntimeError: aclose(): asynchronous generator is already running`, right

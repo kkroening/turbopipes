@@ -41,6 +41,12 @@ async def ataskify(
         spent source ends this generator, and never yields a task carrying
         ``StopAsyncIteration``.
 
+        A source that raises :class:`asyncio.CancelledError` of its own comes out as a
+        *cancelled* task.  Awaiting it and ``task.exception()`` both raise
+        ``CancelledError``, which the ``except Exception`` above doesn't catch; a
+        consumer that means to treat it as one more failure checks ``task.cancelled()``
+        first.
+
     Warning:
         The caller is responsible for closing this generator if consumption stops early
         - e.g. via :func:`contextlib.aclosing` - as with the rest of this library.

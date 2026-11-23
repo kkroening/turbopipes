@@ -56,6 +56,10 @@ def aselect(
         cleanup fails while the merge is being torn down, since by then there is no
         consumer left to tell.  See :func:`~turbopipes.ataskify`.
 
+        A source's own :class:`asyncio.CancelledError` comes out as a cancelled task,
+        which the ``except Exception`` above doesn't catch.  See
+        :func:`~turbopipes.ataskify`.
+
     Warning:
         The caller is responsible for closing this generator if consumption stops early
         - e.g. via :func:`contextlib.aclosing` - as with the rest of this library.  The

@@ -22,6 +22,21 @@ async def test_ataskify__yields_completed_tasks():
     assert actual == [0, 1, 2]
 
 
+async def test_ataskify__source_raising_cancelled_error_comes_out_as_a_cancelled_task():
+    # A source raising `CancelledError` of its own comes out as a cancelled task, rather
+    # than as an exception ending the iteration.
+    async def source():
+        yield 'first'
+        raise asyncio.CancelledError()
+
+    stream = turbopipes.ataskify(source())
+    async with contextlib.aclosing(stream):
+        tasks = [task async for task in stream]
+
+    assert [task.cancelled() for task in tasks] == [False, True]
+    assert tasks[0].result() == 'first'
+
+
 async def test_ataskify__source_failure_surfaces_at_the_await():
     # The whole point of the indirection: the failure is the consumer's to handle, and
     # arrives as a task that raises rather than as an exception ending the iteration.
