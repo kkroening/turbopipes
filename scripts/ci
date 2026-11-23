@@ -55,6 +55,12 @@ _pytest() (
     || return
 )
 
+_render_issues() {
+  _show_banner 'Checking the issue index ...'
+  "$(dirname "${BASH_SOURCE[0]}")/render_issues" --check \
+    || return
+}
+
 _main() {
   if ! (
     _init || return
@@ -63,6 +69,7 @@ _main() {
     _pylint || return
     _isort || return
     _black || return
+    _render_issues || return
   ); then
     echo 'Failed; aborting.' >&2
     return 1
