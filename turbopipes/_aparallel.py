@@ -40,9 +40,8 @@ async def aparallel(
         as possible rather than being bottlenecked by the slower item(s).
 
         An item that raises :class:`asyncio.CancelledError` of its own comes out as a
-        *cancelled* task.  Awaiting it and ``task.exception()`` both raise
-        ``CancelledError``, which ``except Exception`` doesn't catch; a consumer that
-        means to treat it as one more failure checks ``task.cancelled()`` first.
+        *cancelled* task, which ``except Exception`` lets through, so check
+        ``task.cancelled()`` first.
 
     Warning:
         The caller is responsible for closing this async generator in the event of
@@ -110,8 +109,7 @@ async def aparallel(
                 for done_task in done_tasks:
                     yield done_task
 
-        # Drain phase: wait as above, so the last tasks also come out finished and in
-        # completion order.
+        # Drain phase
         while pending_inner_tasks:
             done_tasks, pending_inner_tasks = await asyncio.wait(
                 pending_inner_tasks, return_when=asyncio.FIRST_COMPLETED

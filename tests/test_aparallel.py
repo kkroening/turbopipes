@@ -149,7 +149,7 @@ async def test_aparallel__task_raising_cancelled_error_comes_out_cancelled():
     async def mock_task(index: int) -> int:
         await asyncio.sleep(0)
         if index == 1:
-            # Later than the others, so it's still running when the input runs out.
+            # Finishes after the others, so it is still running when they come out.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
             raise asyncio.CancelledError()

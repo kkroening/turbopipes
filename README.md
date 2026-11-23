@@ -74,6 +74,9 @@ async def main():
                 print(f'A specific task failed, but the pipeline survives: {exc}')
 ```
 
+One catch: an item that raises `CancelledError` of its own comes out as a cancelled task, which
+`except Exception` lets through, so check `task.cancelled()` first.
+
 ## 🔀 Merging Several Sources: `aselect`
 
 Sometimes the problem isn't fanning one stream _out_ across workers, but fanning several streams
@@ -102,8 +105,7 @@ pull is in flight for each of them, and none is re-armed until your loop comes b
 item—so a chatty source can't run away from a slow consumer. A source that runs dry drops out
 quietly; the merge itself ends when the last one does.
 
-One catch, here and in `aparallel`: a source or task that raises `CancelledError` of its own comes
-out as a cancelled task, which `except Exception` lets through, so check `task.cancelled()` first.
+Same catch for a source that raises `CancelledError` of its own.
 
 The teardown is the part worth knowing about. When you walk away early, sources can be left
 suspended mid-`__anext__()`, and an async generator suspended _inside its own body_ cannot be
